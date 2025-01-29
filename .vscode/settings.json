@@ -1,0 +1,14 @@
+{
+  "python.pythonPath": "./venv/bin/python3",
+  "python.formatting.provider": "autopep8",
+  "python.formatting.autopep8Args": [
+    "--max-line-length=100"
+  ],
+  "python.linting.enabled": true,
+  "python.analysis.typeCheckingMode": "off",
+  "python.analysis.diagnosticMode": "workspace",
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit",
+  },
+  "editor.formatOnSave": true,
+}
