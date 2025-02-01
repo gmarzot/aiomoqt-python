@@ -1,5 +1,6 @@
 from enum import IntEnum, auto
 
+
 class MessageTypes:
     """MOQT message type constants."""
     SUBSCRIBE_UPDATE = 0x02
@@ -29,6 +30,14 @@ class MessageTypes:
     CLIENT_SETUP = 0x40
     SERVER_SETUP = 0x41
 
+
+class SetupParamType(IntEnum):
+    """Setup Parameter type constants"""
+    CLIENT_ROLE = 0x0  # deprecated - removed in draft-8
+    ENDPOINT_PATH = 0x1  # only relevant to raw QUIC connection
+    MAX_SUBSCRIBER_ID = 0x2
+
+
 class SessionCloseCode(IntEnum):
     """Session close error codes."""
     NO_ERROR = 0x0
@@ -42,6 +51,7 @@ class SessionCloseCode(IntEnum):
     CONTROL_MESSAGE_TIMEOUT = 0x11
     DATA_STREAM_TIMEOUT = 0x12
 
+
 class SubscribeErrorCode(IntEnum):
     """SUBSCRIBE_ERROR error codes."""
     INTERNAL_ERROR = 0x0
@@ -50,6 +60,7 @@ class SubscribeErrorCode(IntEnum):
     TRACK_DOES_NOT_EXIST = 0x3
     UNAUTHORIZED = 0x4
     TIMEOUT = 0x5
+
 
 class SubscribeDoneCode(IntEnum):
     """SUBSCRIBE_DONE status codes."""
@@ -62,6 +73,7 @@ class SubscribeDoneCode(IntEnum):
     EXPIRED = 0x6
     TOO_FAR_BEHIND = 0x7
 
+
 class TrackStatusCode(IntEnum):
     """TRACK_STATUS status codes."""
     IN_PROGRESS = 0x0
@@ -70,18 +82,22 @@ class TrackStatusCode(IntEnum):
     FINISHED = 0x3
     RELAY_NO_INFO = 0x4
 
+
 class FilterType(IntEnum):
     """Subscription filter types."""
     LATEST_GROUP = 0x1
+    RECENT_GROUP = 0x1
     LATEST_OBJECT = 0x2
     ABSOLUTE_START = 0x3
     ABSOLUTE_RANGE = 0x4
+
 
 class GroupOrder(IntEnum):
     """Group ordering preferences."""
     PUBLISHER_DEFAULT = 0x0
     ASCENDING = 0x1
     DESCENDING = 0x2
+
 
 class ObjectStatus(IntEnum):
     """Object status codes."""
@@ -91,10 +107,12 @@ class ObjectStatus(IntEnum):
     END_OF_TRACK_AND_GROUP = 0x4
     END_OF_TRACK = 0x5
 
+
 class StreamType(IntEnum):
     """Stream type identifiers."""
     STREAM_HEADER_SUBGROUP = 0x4
     FETCH_HEADER = 0x5
+
 
 class DatagramType(IntEnum):
     """Datagram type identifiers."""

@@ -15,13 +15,14 @@ uv pip install moqt
 Basic client usage:
 
 ```python
-from moqt.protocol import MOQTProtocol
-from moqt.messages import MessageTypes
+
+from moqt.client import MOQTClient
 
 async def main():
-    client = MOQTClient()
-    await client.initialize(host='localhost', port=4433)
-    await client.subscribe('namespace', 'track_name')
+    client = MOQTClient(host='localhost', port=4433)
+    async with client.connect() as client_session
+        await client_session.initialize()
+        await client_session.subscribe_to_track('namespace', 'track_name')
 ```
 
 ## Development

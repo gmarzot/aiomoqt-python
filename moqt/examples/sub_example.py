@@ -5,7 +5,10 @@ import logging
 import ssl
 
 import asyncio
-import moqt.client
+from aioquic.h3.connection import H3_ALPN
+from aioquic.quic.configuration import QuicConfiguration
+from moqt.client import MOQTClient, connect
+from moqt.utils.logger import get_logger, set_log_level, QuicLoggerCustom
 
 
 def parse_args():
@@ -27,11 +30,21 @@ def parse_args():
 
 async def main(host: str, port: int, namespace: str, trackname: str, timeout: int,
                debug: bool):
-    client = await create_client("localhost", 4433)
-    await client.subscribe_to_track(
-        namespace="example",
-        track_name="video"
-    )
+    level = logging.DEBUG if debug else logging.INFO
+    set_log_level(level)
+    logger = get_logger(__name__)
+    try:
+        configuration = QuicConfiguration(
+            alpn_protocols=H3_ALPN,
+            is_client=True,
+            verify_mode=ssl.CERT_NONE,
+            quic_logger=QuicLoggerCustom() if debug else None
+        )
+
+        client = MOQTClient(host, port, configuration, debug)
+        async with client.connect() as client_session:
+            await asyncio.wait_for(client_session.initialize(), timeout=30)
+            await client_session.subscribe(namespace=namespace, track_name=trackname)
 
     except asyncio.TimeoutError:
         logger.error("Operation timed out")
