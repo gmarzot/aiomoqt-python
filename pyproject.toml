@@ -1,7 +1,7 @@
 [project]
-name = "moqt"
+name = "aiomoqt"
 dynamic = ["version"]
-description = "Python implementation of the MOQT protocol"
+description = "Python asyncio implementation of the MOQT protocol"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
@@ -14,8 +14,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/gmarzot/moqt-python"
-Repository = "https://github.com/gmarzot/moqt-python.git"
+Homepage = "https://github.com/gmarzot/aiomoqt-python"
+Repository = "https://github.com/gmarzot/aiomoqt-python.git"
 
 [project.optional-dependencies]
 test = ["pytest"]

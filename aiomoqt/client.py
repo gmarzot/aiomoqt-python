@@ -15,7 +15,7 @@ from .utils.logger import get_logger, QuicDebugLogger
 
 logger = get_logger(__name__)
 
-USER_AGENT = f"moqt-client/{version('moqt')}"
+USER_AGENT = f"aiomoqt-client/{version('aiomoqt')}"
 
 
 class MOQTClientProtocol(MOQTProtocol):

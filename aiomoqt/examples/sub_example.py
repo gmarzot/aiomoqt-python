@@ -7,8 +7,8 @@ import ssl
 import asyncio
 from aioquic.h3.connection import H3_ALPN
 from aioquic.quic.configuration import QuicConfiguration
-from moqt.client import MOQTClient, connect
-from moqt.utils.logger import get_logger, set_log_level, QuicDebugLogger
+from aiomoqt.client import MOQTClient, connect
+from aiomoqt.utils.logger import get_logger, set_log_level, QuicDebugLogger
 
 
 def parse_args():
@@ -21,6 +21,8 @@ def parse_args():
                         help='Track namespace')
     parser.add_argument('--trackname', type=str, required=True,
                         help='Track name')
+    parser.add_argument('--endpoint', type=str, required=True,
+                        help='MOQT WT endpoint')
     parser.add_argument('--timeout', type=int, default=30,
                         help='How long to run before unsubscribing (seconds)')
     parser.add_argument('--debug', action='store_true',
@@ -28,10 +30,9 @@ def parse_args():
     return parser.parse_args()
 
 
-async def main(host: str, port: int, namespace: str, trackname: str, timeout: int,
-               debug: bool):
-    level = logging.DEBUG if debug else logging.INFO
-    set_log_level(level)
+async def main(host: str, port: int, endpoint: str, namespace: str, trackname: str, timeout: int,  debug: bool):
+    log_level = logging.DEBUG if debug else logging.INFO
+    set_log_level(log_level)
     logger = get_logger(__name__)
     try:
         configuration = QuicConfiguration(
@@ -39,13 +40,21 @@ async def main(host: str, port: int, namespace: str, trackname: str, timeout: in
             is_client=True,
             verify_mode=ssl.CERT_NONE,
             quic_logger=QuicDebugLogger() if debug else None,
-            secrets_log_file=open("/tmp/keylog.client.txt", "a")
+            secrets_log_file=open("/tmp/keylog.client.txt",
+                                  "a") if debug else None
         )
-        logger.debug(f"main: configurtation.secrets_log_file: {configuration.secrets_log_file}")
-        client = MOQTClient(host, port, configuration, debug)
+
+        client = MOQTClient(host, port, endpoint=endpoint,
+                            configuration=configuration, debug=debug)
+
         async with client.connect() as client_session:
             await asyncio.wait_for(client_session.initialize(), timeout=30)
-            await client_session.subscribe(namespace=namespace, track_name=trackname)
+            client_session.subscribe(
+                namespace=namespace, track_name=trackname)
+            await asyncio.sleep(timeout)
+            logger.info(f"still in context: {client_session}")
+
+        logger.info(f"finished: client: {client}")
 
     except asyncio.TimeoutError:
         logger.error("Operation timed out")
@@ -56,6 +65,7 @@ if __name__ == "__main__":
     asyncio.run(main(
         host=args.host,
         port=args.port,
+        endpoint=args.endpoint,
         namespace=args.namespace,
         trackname=args.trackname,
         timeout=args.timeout,
