@@ -40,10 +40,10 @@ jobs:
         registry: [testpypi, pypi]
         include:
           - registry: testpypi
-            url: https://test.pypi.org/
+            url: https://test.pypi.org/legacy/
             secret: TEST_PYPI_API_TOKEN
           - registry: pypi
-            url: https://pypi.org/
+            url: https://pypi.org/legacy/
             secret: PYPI_API_TOKEN
     steps:
     - uses: actions/checkout@v3
