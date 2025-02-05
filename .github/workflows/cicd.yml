@@ -1,4 +1,4 @@
-name: CI/CD ${{ github.ref_name != '' && format(': {0}', github.ref_name) || '' }} $(git describe --tags)
+name: CI/CD
 
 on:
   pull_request:
