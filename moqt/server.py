@@ -11,7 +11,7 @@ from aioquic.quic.configuration import QuicConfiguration
 from aioquic.tls import load_private_key, load_certificate_chain
 
 from .protocol import MOQTProtocol
-from .moqtypes import SessionCloseCode
+from .types import SessionCloseCode
 from .utils.logger import get_logger
 
 logger = get_logger(__name__)

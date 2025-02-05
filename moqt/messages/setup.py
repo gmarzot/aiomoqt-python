@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 from aioquic.buffer import Buffer
 from .base import MOQTMessage
-from ..moqtypes import MessageTypes, SetupParamType
+from ..types import MessageTypes, SetupParamType
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -133,16 +133,7 @@ class ClientSetup(MOQTMessage):
                 f"  param: id: {id} ({hex(param_id)}) len: {param_len} val: {param_value}")
 
             return cls(versions=versions, parameters=params)
-
-    def client_setup(self, version: int = 0xff000007) -> bytes:
-        """Create a CLIENT_SETUP message."""
-        msg = ClientSetup(
-            type=MessageTypes.CLIENT_SETUP,
-            versions=[version],
-            parameters={}
-        )
-        return msg.serialize()
-
+        
 
 @dataclass
 class GoAway(MOQTMessage):

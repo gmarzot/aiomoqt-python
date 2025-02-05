@@ -7,11 +7,10 @@ from aioquic.asyncio.client import connect
 from aioquic.h3.connection import H3_ALPN
 
 from .protocol import MOQTProtocol
-from .moqtypes import FilterType, GroupOrder, SessionCloseCode, MessageTypes
+from .types import FilterType, GroupOrder, SessionCloseCode, MessageTypes
 from .messages.setup import *
 from .messages.subscribe import *
-
-from .utils.logger import get_logger, QuicLoggerCustom
+from .utils.logger import get_logger, QuicDebugLogger
 
 logger = get_logger(__name__)
 
@@ -22,7 +21,7 @@ class MOQTClientProtocol(MOQTProtocol):
     """MOQT client implementation."""
 
     def __init__(self, *args, client: 'MOQTClient', **kwargs):
-        super().__init__(*args)
+        super().__init__(*args, **kwargs)
         self._client = client
 
         # Register handler using closure to capture self
@@ -50,7 +49,7 @@ class MOQTClientProtocol(MOQTProtocol):
     async def initialize(self) -> None:
         """Initialize WebTransport and MOQT session."""
         # Create WebTransport session
-        session_stream_id = self._h3._quic.get_next_available_stream_id(
+        self._session_id = self._h3._quic.get_next_available_stream_id(
             is_unidirectional=False
         )
 
@@ -60,16 +59,16 @@ class MOQTClientProtocol(MOQTProtocol):
             (b":scheme", b"https"),
             (b":authority",
              f"{self._client.host}:{self._client.port}".encode()),
-            (b":path", b"/moq"),
+            (b":path", f"/{self._client.endpoint}".encode()),
             (b"sec-webtransport-http3-draft", b"draft02"),
             (b"user-agent", USER_AGENT.encode()),
         ]
 
         logger.info(
-            f"Sending WebTransport session request (stream: {session_stream_id})")
-        self._h3.send_headers(stream_id=session_stream_id,
+            f"WebTransport connect send: (stream: {self._session_id})")
+        self._h3.send_headers(stream_id=self._session_id,
                               headers=headers, end_stream=False)
-
+        self.transmit()
         # Wait for WebTransport session establishment
         try:
             await asyncio.wait_for(self._wt_session.wait(), timeout=30.0)
@@ -79,13 +78,13 @@ class MOQTClientProtocol(MOQTProtocol):
 
         # Create MOQT control stream
         self._control_stream_id = self._h3.create_webtransport_stream(
-            session_id=session_stream_id
+            session_id=self._session_id
         )
         logger.info(f"Created control stream: {self._control_stream_id}")
 
         # Send CLIENT_SETUP
         logger.info("Sending CLIENT_SETUP")
-        await self.send_control_message(
+        self.send_control_message(
             ClientSetup(
                 versions=[0xff000007],
                 parameters={}
@@ -99,7 +98,7 @@ class MOQTClientProtocol(MOQTProtocol):
             logger.error("MOQT session setup timeout")
             raise
 
-    async def subscribe(
+    def subscribe(
         self,
         namespace: str,
         track_name: str,
@@ -119,7 +118,7 @@ class MOQTClientProtocol(MOQTProtocol):
         if parameters is None:
             parameters = {}
 
-        await self.send_control_message(
+        self.send_control_message(
             Subscribe(
                 subscribe_id=subscribe_id,
                 track_alias=track_alias,
@@ -141,27 +140,29 @@ class MOQTClient:  # New connection manager class
         self,
         host: str,
         port: int,
+        endpoint: Optional[str] = None,
         configuration: Optional[QuicConfiguration] = None,
         debug: bool = False
     ):
         self.host = host
         self.port = port
         self.debug = debug
-
+        self.endpoint = endpoint
         if configuration is None:
-            self.configuration = QuicConfiguration(
+            configuration = QuicConfiguration(
                 alpn_protocols=H3_ALPN,
                 is_client=True,
                 verify_mode=ssl.CERT_NONE,
-                quic_logger=QuicLoggerCustom() if debug else None
+                quic_logger=QuicDebugLogger() if debug else None,
+                secrets_log_file=open(
+                    "/tmp/keylog.client.txt", "a") if debug else None
             )
-        else:
-            self.configuration = configuration
-
-        # logger.debug(f"quic_logger: {self.configuration.quic_logger.__class__}")
+        self.configuration = configuration
+        logger.debug(f"quic_logger: {configuration.quic_logger.__class__}")
 
     def connect(self) -> AsyncContextManager[MOQTClientProtocol]:
         """Return a context manager that creates MOQTClientProtocol instance."""
+        logger.debug(f"MOQTClient: connect: {self.__class__}")
         return connect(
             self.host,
             self.port,

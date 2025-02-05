@@ -9,12 +9,12 @@ from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.h3.connection import H3Connection, H3Stream
 from aioquic.quic.connection import QuicConnection
 from aioquic.quic.events import QuicEvent, StreamDataReceived
-from aioquic.h3.events import HeadersReceived, DataReceived, WebTransportStreamDataReceived
+from aioquic.h3.events import HeadersReceived, DataReceived
 from aioquic.quic.logger import QuicLoggerTrace
 
 from .utils.logger import get_logger
 from .messages import MessageHandler
-from .moqtypes import SessionCloseCode, StreamType, MessageTypes
+from .types import SessionCloseCode, StreamType, MessageTypes
 
 logger = get_logger(__name__)
 
@@ -22,9 +22,9 @@ logger = get_logger(__name__)
 class H3CustomConnection(H3Connection):
     """Custom H3Connection wrapper to support alternate SETTINGS"""
 
-    def __init__(self, quic: QuicConnection, enable_webtransport: bool = False) -> None:
-        # settings
-        self._max_table_capacity = 0
+    def __init__(self, quic: QuicConnection, enable_webtransport: bool = False, table_capacity: int = 0) -> None:
+        # settings table capacity can be overridden - this should be generalized
+        self._max_table_capacity = table_capacity
         self._blocked_streams = 16
         self._enable_webtransport = enable_webtransport
 
@@ -71,6 +71,7 @@ class MOQTProtocol(QuicConnectionProtocol):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._h3: Optional[H3Connection] = None
+        self._session_id: Optional[int] = None
         self._control_stream_id: Optional[int] = None
         self._streams: Dict[int, Dict] = {}
         self._groups = defaultdict(lambda: {'objects': 0, 'subgroups': set()})
@@ -163,14 +164,16 @@ class MOQTProtocol(QuicConnectionProtocol):
             if name == b':status':
                 status = value
 
+        stream_id = event.stream_id
+        msg = f"H3 EVENT: stream {stream_id}: "
         if status == b"200":
-            logger.info(
-                f"H3 EVENT: stream {event.stream_id}: WebTransport session established")
-            self._wt_session.set()
+            logger.info(msg + "WebTransport session established")
         else:
-            error = f"H3 EVENT: stream {event.stream_id}: WebTransport session setup failed({status})"
-            logger.error(error)
+            error = f"WebTransport session setup failed ({status})"
+            logger.error(msg + error)
             raise Exception(error)
+        # signal WebTransport session established event
+        self._wt_session.set()
 
     def _handle_data_received(self, event: DataReceived) -> None:
         """Process incoming H3 data."""
@@ -230,12 +233,11 @@ class MOQTProtocol(QuicConnectionProtocol):
         logger.info(f"    Object: {object_id}")
         logger.info(f"    Payload size: {len(payload)}")
 
-    async def send_control_message(self, data: bytes) -> None:
+    def send_control_message(self, data: bytes) -> None:
         """Send a MOQT message on the control stream."""
-        if not self._control_stream_id:
+        if self._quic is None or self._control_stream_id is None:
             raise RuntimeError("Control stream not initialized")
-
-        self._h3._quic.send_stream_data(
+        self._quic.send_stream_data(
             stream_id=self._control_stream_id,
             data=data,
             end_stream=False
@@ -258,6 +260,15 @@ class MOQTProtocol(QuicConnectionProtocol):
     def close(self, error_code: SessionCloseCode = SessionCloseCode.NO_ERROR,
               reason_phrase: str = "Normal closure") -> None:
         """Close the MOQT session."""
-        if self._quic:
-            self._quic.close(error_code=error_code,
-                             reason_phrase=reason_phrase)
+        logger.info(f"Closing connection with {error_code}: {reason_phrase}")
+
+        if self._session_id is not None:
+            logger.debug(f"Closing H3 session: stream {self._session_id}")
+            self._h3.send_data(self._session_id, b"", end_stream=True)
+            self._session_id = None
+            self.transmit()
+
+        self._h3 = None
+
+        super().close(error_code, reason_phrase)
+        self.transmit()

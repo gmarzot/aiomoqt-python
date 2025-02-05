@@ -2,7 +2,7 @@ from dataclasses import dataclass, fields
 from typing import Type, Any, Dict, ClassVar, Callable, Awaitable, Optional
 import asyncio
 from aioquic.buffer import Buffer
-from ..moqtypes import MessageTypes
+from ..types import MessageTypes
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 @dataclass
 class MOQTMessage:
     """Base class for all MOQT messages."""
-    # type: Optional[int] = None
+    # type: Optional[int] = None - let subclass set it - annoying warnings
 
     def serialize(self) -> bytes:
         """Convert message to complete wire format."""
@@ -69,24 +69,24 @@ class MessageHandler:
         TrackStatus,
     )
 
-    # from .announce import (
-    #     Announce,
-    #     AnnounceOk,
-    #     AnnounceError,
-    #     Unannounce,
-    #     AnnounceCancel,
-    #     SubscribeAnnounces,
-    #     SubscribeAnnouncesOk,
-    #     SubscribeAnnouncesError,
-    #     UnsubscribeAnnounces
-    # )
+    from .announce import (
+        Announce,
+        AnnounceOk,
+        AnnounceError,
+        Unannounce,
+        AnnounceCancel,
+        SubscribeAnnounces,
+        SubscribeAnnouncesOk,
+        SubscribeAnnouncesError,
+        UnsubscribeAnnounces
+    )
 
-    # from .fetch import (
-    #     Fetch,
-    #     FetchOk,
-    #     FetchError,
-    #     FetchCancel
-    # )
+    from .fetch import (
+        Fetch,
+        FetchOk,
+        FetchError,
+        FetchCancel
+    )
 
     # MOQT message types to class map
     _message_types: ClassVar[Dict[int, Type[MOQTMessage]]] = {
@@ -101,17 +101,17 @@ class MessageHandler:
         MessageTypes.SUBSCRIBE_ERROR: SubscribeError,  # 0x05
 
         # Announce messages (0x06-0x09)
-        # MessageTypes.ANNOUNCE: Announce,               # 0x06
-        # MessageTypes.ANNOUNCE_OK: AnnounceOk,         # 0x07
-        # MessageTypes.ANNOUNCE_ERROR: AnnounceError,   # 0x08
-        # MessageTypes.UNANNOUNCE: Unannounce,         # 0x09
+        MessageTypes.ANNOUNCE: Announce,               # 0x06
+        MessageTypes.ANNOUNCE_OK: AnnounceOk,         # 0x07
+        MessageTypes.ANNOUNCE_ERROR: AnnounceError,   # 0x08
+        MessageTypes.UNANNOUNCE: Unannounce,         # 0x09
 
         # Additional subscription messages (0x0A-0x0B)
         MessageTypes.UNSUBSCRIBE: Unsubscribe,        # 0x0A
         MessageTypes.SUBSCRIBE_DONE: SubscribeDone,   # 0x0B
 
         # Announce control messages (0x0C)
-        # MessageTypes.ANNOUNCE_CANCEL: AnnounceCancel,  # 0x0C
+        MessageTypes.ANNOUNCE_CANCEL: AnnounceCancel,  # 0x0C
 
         # Status messages (0x0D-0x0E)
         MessageTypes.TRACK_STATUS_REQUEST: TrackStatusRequest,  # 0x0D
@@ -121,20 +121,20 @@ class MessageHandler:
         MessageTypes.GOAWAY: GoAway,                  # 0x10
 
         # Subscription announce messages (0x11-0x14)
-        # MessageTypes.SUBSCRIBE_ANNOUNCES: SubscribeAnnounces,         # 0x11
-        # MessageTypes.SUBSCRIBE_ANNOUNCES_OK: SubscribeAnnouncesOk,    # 0x12
-        # MessageTypes.SUBSCRIBE_ANNOUNCES_ERROR: SubscribeAnnouncesError,  # 0x13
-        # MessageTypes.UNSUBSCRIBE_ANNOUNCES: UnsubscribeAnnounces,    # 0x14
+        MessageTypes.SUBSCRIBE_ANNOUNCES: SubscribeAnnounces,         # 0x11
+        MessageTypes.SUBSCRIBE_ANNOUNCES_OK: SubscribeAnnouncesOk,    # 0x12
+        MessageTypes.SUBSCRIBE_ANNOUNCES_ERROR: SubscribeAnnouncesError,  # 0x13
+        MessageTypes.UNSUBSCRIBE_ANNOUNCES: UnsubscribeAnnounces,    # 0x14
 
         # Subscribe control messages (0x15, 0x1A)
         MessageTypes.MAX_SUBSCRIBE_ID: MaxSubscribeId,      # 0x15
         MessageTypes.SUBSCRIBES_BLOCKED: SubscribesBlocked,  # 0x1A
 
         # Fetch messages (0x16-0x19)
-        # MessageTypes.FETCH: Fetch,                    # 0x16
-        # MessageTypes.FETCH_CANCEL: FetchCancel,       # 0x17
-        # MessageTypes.FETCH_OK: FetchOk,               # 0x18
-        # MessageTypes.FETCH_ERROR: FetchError,         # 0x19
+        MessageTypes.FETCH: Fetch,                    # 0x16
+        MessageTypes.FETCH_CANCEL: FetchCancel,       # 0x17
+        MessageTypes.FETCH_OK: FetchOk,               # 0x18
+        MessageTypes.FETCH_ERROR: FetchError,         # 0x19
     }
 
     def __init__(self, protocol: Any):

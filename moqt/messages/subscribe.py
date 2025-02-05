@@ -1,4 +1,4 @@
-from ..moqtypes import MessageTypes, TrackStatusCode
+from ..types import MessageTypes, TrackStatusCode
 from typing import Dict, Optional
 from dataclasses import dataclass
 from typing import Dict, List, Optional

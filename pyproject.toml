@@ -14,8 +14,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/gmarzot/moqt"
-Repository = "https://github.com/gmarzot/moqt.git"
+Homepage = "https://github.com/gmarzot/moqt-python"
+Repository = "https://github.com/gmarzot/moqt-python.git"
 
 [build-system]
 requires = ["hatchling"]

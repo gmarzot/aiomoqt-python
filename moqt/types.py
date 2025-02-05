@@ -114,6 +114,13 @@ class StreamType(IntEnum):
     FETCH_HEADER = 0x5
 
 
+class ForwardingPreference(IntEnum):
+    """Object forwarding preferences."""
+    TRACK = 0x0
+    SUBGROUP = 0x1
+    DATAGRAM = 0x2
+
+
 class DatagramType(IntEnum):
     """Datagram type identifiers."""
     OBJECT_DATAGRAM = 0x1
