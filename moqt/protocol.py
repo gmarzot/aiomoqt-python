@@ -117,6 +117,9 @@ class MOQTProtocol(QuicConnectionProtocol):
                     f"QUIC EVENT: data stream {event.stream_id}: data: 0x{event.data.hex()}")
                 self._handle_data_message(event.stream_id, event.data)
                 return
+            else:
+                logger.debug(
+                    f"QUIC EVENT: stream {stream_id}: unknown stream id")
 
         # Pass remaining events to H3
         if self._h3 is not None:
