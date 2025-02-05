@@ -1,5 +1,6 @@
 import asyncio
 import ssl
+from importlib.metadata import version
 from typing import Optional, Dict, AsyncContextManager
 
 from aioquic.quic.configuration import QuicConfiguration
@@ -14,7 +15,7 @@ from .utils.logger import get_logger, QuicDebugLogger
 
 logger = get_logger(__name__)
 
-USER_AGENT = "moqt-client/0.1.0"
+USER_AGENT = f"moqt-client/{version('moqt')}"
 
 
 class MOQTClientProtocol(MOQTProtocol):
