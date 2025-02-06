@@ -5,9 +5,9 @@ A Python implementation of the MOQT (Media over QUIC) protocol.
 ## Installation
 
 ```bash
-pip install moqt
+pip install aiomoqt
 # or
-uv pip install moqt
+uv pip install aiomoqt
 ```
 
 ## Usage
@@ -16,7 +16,7 @@ Basic client usage:
 
 ```python
 
-from moqt.client import MOQTClient
+from aiomoqt.client import MOQTClient
 
 async def main():
     client = MOQTClient(host='localhost', port=4433)
@@ -30,7 +30,7 @@ async def main():
 To set up for development:
 
 ```bash
-git clone https://github.com/yourusername/moqt.git
+git clone https://github.com/gmarzot/aiomoqt-python.git
 cd moqt
 pip install -e .
 ```
