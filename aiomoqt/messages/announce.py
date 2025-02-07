@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, List, Tuple
 from aioquic.buffer import Buffer
 from .base import MOQTMessage 
-from ..types import MessageTypes
+from ..types import MOQTMessageType
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -14,7 +14,7 @@ class Announce(MOQTMessage):
     parameters: Dict[int, bytes] = None  # Optional parameters
 
     def __post_init__(self):
-        self.type = MessageTypes.ANNOUNCE
+        self.type = MOQTMessageType.ANNOUNCE
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -66,7 +66,7 @@ class AnnounceOk(MOQTMessage):
     namespace: Tuple[bytes, ...]
 
     def __post_init__(self):
-        self.type = MessageTypes.ANNOUNCE_OK
+        self.type = MOQTMessageType.ANNOUNCE_OK
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -99,7 +99,7 @@ class AnnounceError(MOQTMessage):
     reason: str
 
     def __post_init__(self):
-        self.type = MessageTypes.ANNOUNCE_ERROR
+        self.type = MOQTMessageType.ANNOUNCE_ERROR
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -140,7 +140,7 @@ class Unannounce(MOQTMessage):
     namespace: Tuple[bytes, ...]
 
     def __post_init__(self):
-        self.type = MessageTypes.UNANNOUNCE
+        self.type = MOQTMessageType.UNANNOUNCE
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -173,7 +173,7 @@ class AnnounceCancel(MOQTMessage):
     reason: str
 
     def __post_init__(self):
-        self.type = MessageTypes.ANNOUNCE_CANCEL
+        self.type = MOQTMessageType.ANNOUNCE_CANCEL
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -215,7 +215,7 @@ class SubscribeAnnounces(MOQTMessage):
     parameters: Dict[int, bytes]
 
     def __post_init__(self):
-        self.type = MessageTypes.SUBSCRIBE_ANNOUNCES
+        self.type = MOQTMessageType.SUBSCRIBE_ANNOUNCES
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -261,7 +261,7 @@ class SubscribeAnnouncesOk(MOQTMessage):
     namespace_prefix: Tuple[bytes, ...]
 
     def __post_init__(self):
-        self.type = MessageTypes.SUBSCRIBE_ANNOUNCES_OK
+        self.type = MOQTMessageType.SUBSCRIBE_ANNOUNCES_OK
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -294,7 +294,7 @@ class SubscribeAnnouncesError(MOQTMessage):
     reason: str
 
     def __post_init__(self):
-        self.type = MessageTypes.SUBSCRIBE_ANNOUNCES_ERROR
+        self.type = MOQTMessageType.SUBSCRIBE_ANNOUNCES_ERROR
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -335,7 +335,7 @@ class UnsubscribeAnnounces(MOQTMessage):
     namespace_prefix: Tuple[bytes, ...]
 
     def __post_init__(self):
-        self.type = MessageTypes.UNSUBSCRIBE_ANNOUNCES
+        self.type = MOQTMessageType.UNSUBSCRIBE_ANNOUNCES
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)

@@ -1,7 +1,7 @@
-from enum import IntEnum, auto
+from enum import IntEnum
 
 
-class MessageTypes:
+class MOQTMessageType:
     """MOQT message type constants."""
     SUBSCRIBE_UPDATE = 0x02
     SUBSCRIBE = 0x03
@@ -29,6 +29,13 @@ class MessageTypes:
     SUBSCRIBES_BLOCKED = 0x1A
     CLIENT_SETUP = 0x40
     SERVER_SETUP = 0x41
+
+
+class ParamType(IntEnum):
+    """Parameter types for MOQT messages."""
+    AUTHORIZATION_INFO = 0x02
+    DELIVERY_TIMEOUT = 0x03
+    MAX_CACHE_DURATION = 0x04
 
 
 class SetupParamType(IntEnum):

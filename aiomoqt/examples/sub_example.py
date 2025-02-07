@@ -7,6 +7,7 @@ import ssl
 import asyncio
 from aioquic.h3.connection import H3_ALPN
 from aioquic.quic.configuration import QuicConfiguration
+from aiomoqt.types import ParamType
 from aiomoqt.client import MOQTClient, connect
 from aiomoqt.utils.logger import get_logger, set_log_level, QuicDebugLogger
 
@@ -49,6 +50,9 @@ async def main(host: str, port: int, endpoint: str, namespace: str, trackname: s
 
         async with client.connect() as client_session:
             await asyncio.wait_for(client_session.initialize(), timeout=30)
+            client_session.subscribe_announces(namespace_prefix=namespace,
+                                    parameters={ParamType.AUTHORIZATION_INFO: b"auth-token-123"})
+            await asyncio.sleep(timeout)
             client_session.subscribe(
                 namespace=namespace, track_name=trackname)
             await asyncio.sleep(timeout)

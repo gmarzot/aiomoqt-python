@@ -6,11 +6,11 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [
-    { name = "Your Name", email = "gmarzot@marzresearch.net" }
+    { name = "Giovanni Marzot", email = "gmarzot@marzresearch.net" }
 ]
 dependencies = [
+    "asyncio>=3.4.3",
     "aioquic>=1.2.0",
-    "asyncio"
 ]
 
 [project.urls]

@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, List, Tuple
 from aioquic.buffer import Buffer
 from .base import MOQTMessage 
-from ..types import MessageTypes
+from ..types import MOQTMessageType
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -22,7 +22,7 @@ class Fetch(MOQTMessage):
     parameters: Dict[int, bytes]
 
     def __post_init__(self):
-        self.type = MessageTypes.FETCH
+        self.type = MOQTMessageType.FETCH
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -109,7 +109,7 @@ class FetchCancel(MOQTMessage):
     subscribe_id: int
 
     def __post_init__(self):
-        self.type = MessageTypes.FETCH_CANCEL
+        self.type = MOQTMessageType.FETCH_CANCEL
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -138,7 +138,7 @@ class FetchOk(MOQTMessage):
     parameters: Dict[int, bytes]
 
     def __post_init__(self):
-        self.type = MessageTypes.FETCH_OK
+        self.type = MOQTMessageType.FETCH_OK
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -195,7 +195,7 @@ class FetchError(MOQTMessage):
     reason: str
 
     def __post_init__(self):
-        self.type = MessageTypes.FETCH_ERROR
+        self.type = MOQTMessageType.FETCH_ERROR
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)

@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 from aioquic.buffer import Buffer
 from .base import MOQTMessage
-from ..types import MessageTypes, SetupParamType
+from ..types import MOQTMessageType, SetupParamType
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -15,7 +15,7 @@ class ServerSetup(MOQTMessage):
     parameters: Dict[int, bytes] = None
 
     def __post_init__(self):
-        self.type = MessageTypes.SERVER_SETUP
+        self.type = MOQTMessageType.SERVER_SETUP
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -75,7 +75,7 @@ class ClientSetup(MOQTMessage):
     parameters: Dict[int, bytes] = None
 
     def __post_init__(self):
-        self.type = MessageTypes.CLIENT_SETUP
+        self.type = MOQTMessageType.CLIENT_SETUP
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -140,7 +140,7 @@ class GoAway(MOQTMessage):
     new_session_uri: str = None
 
     def __post_init__(self):
-        self.type = MessageTypes.GOAWAY
+        self.type = MOQTMessageType.GOAWAY
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32 + len(self.new_session_uri))

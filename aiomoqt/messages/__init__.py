@@ -1,6 +1,6 @@
-from .base import MOQTMessage, MessageHandler
+from .base import MOQTMessage, MOQTMessageHandler
 
 # For convenience, export message types enum
-from ..types import MessageTypes
+from ..types import MOQTMessageType
 
-__all__ = ['MOQTMessage', 'MessageHandler', 'MessageTypes']
+__all__ = ['MOQTMessage', 'MOQTMessageHandler', 'MOQTMessageType']

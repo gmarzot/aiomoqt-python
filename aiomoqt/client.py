@@ -1,15 +1,16 @@
 import asyncio
 import ssl
 from importlib.metadata import version
-from typing import Optional, Dict, AsyncContextManager
+from typing import Optional, Union, Tuple, Dict, AsyncContextManager
 
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.asyncio.client import connect
 from aioquic.h3.connection import H3_ALPN
 
 from .protocol import MOQTProtocol
-from .types import FilterType, GroupOrder, SessionCloseCode, MessageTypes
+from .types import FilterType, GroupOrder, SessionCloseCode, MOQTMessageType, SubscribeErrorCode
 from .messages.setup import *
+from .messages.announce import *
 from .messages.subscribe import *
 from .utils.logger import get_logger, QuicDebugLogger
 
@@ -31,7 +32,7 @@ class MOQTClientProtocol(MOQTProtocol):
             logger.info(f"Received ServerSetup: {msg}")
 
             if self._moqt_session.is_set():
-                error = "Received duplicate SERVER_SETUP message"
+                error = "Received multiple SERVER_SETUP message"
                 logger.error(error)
                 self.close(
                     error_code=SessionCloseCode.PROTOCOL_VIOLATION,
@@ -43,8 +44,21 @@ class MOQTClientProtocol(MOQTProtocol):
 
         # Register the closure as the handler
         self.message_handler.register_handler(
-            MessageTypes.SERVER_SETUP,
+            MOQTMessageType.SERVER_SETUP,
             handle_server_setup
+        )
+
+        # Register handler using closure to capture self
+        async def handle_subscribe(msg: MOQTMessage) -> None:
+            assert isinstance(msg, Subscribe)
+            logger.info(f"Received Subscribe: {msg}")
+
+            self.subscribe_ok(msg.subscribe_id)
+
+        # Register the closure as the handler
+        self.message_handler.register_handler(
+            MOQTMessageType.SUBSCRIBE,
+            handle_subscribe
         )
 
     async def initialize(self) -> None:
@@ -99,6 +113,19 @@ class MOQTClientProtocol(MOQTProtocol):
             logger.error("MOQT session setup timeout")
             raise
 
+    @classmethod
+    def _make_namespace_tuple(cls, namespace: Union[str, Tuple[str, ...]]) -> Tuple[bytes, ...]:
+        """Convert string or tuple into bytes tuple."""
+        if isinstance(namespace, str):
+            return tuple(part.encode() for part in namespace.split('/'))
+        elif isinstance(namespace, tuple):
+            if all(isinstance(x, bytes) for x in namespace):
+                return namespace
+            return tuple(part.encode() if isinstance(part, str) else part
+                         for part in namespace)
+        raise ValueError(
+            "namespace must be string with '/' delimiters or tuple")
+
     def subscribe(
         self,
         namespace: str,
@@ -118,12 +145,12 @@ class MOQTClientProtocol(MOQTProtocol):
 
         if parameters is None:
             parameters = {}
-
+        namespace_tuple = self._make_namespace_tuple(namespace)
         self.send_control_message(
             Subscribe(
                 subscribe_id=subscribe_id,
                 track_alias=track_alias,
-                namespace=namespace.encode(),
+                namespace=namespace_tuple,
                 track_name=track_name.encode(),
                 priority=priority,
                 direction=group_order,
@@ -132,6 +159,124 @@ class MOQTClientProtocol(MOQTProtocol):
                 start_object=start_object,
                 end_group=end_group,
                 parameters=parameters
+            ).serialize()
+        )
+
+    def subscribe_ok(
+        self,
+        subscribe_id: int,
+        expires: int = 0,  # 0 means no expiry
+        group_order: int = GroupOrder.ASCENDING,
+        content_exists: int = 0,
+        largest_group_id: Optional[int] = None,
+        largest_object_id: Optional[int] = None,
+        parameters: Optional[Dict[int, bytes]] = None
+    ) -> SubscribeOk:
+        """Create and send a SUBSCRIBE_OK response."""
+        logger.info(f"Sending SUBSCRIBE_OK for subscription {subscribe_id}")
+
+        message = SubscribeOk(
+            subscribe_id=subscribe_id,
+            expires=expires,
+            group_order=group_order,
+            content_exists=content_exists,
+            largest_group_id=largest_group_id,
+            largest_object_id=largest_object_id,
+            parameters=parameters or {}
+        )
+        self.send_control_message(message.serialize())
+        return message
+
+    def subscribe_error(
+        self,
+        subscribe_id: int,
+        error_code: int = SubscribeErrorCode.INTERNAL_ERROR,
+        reason: str = "Internal error",
+        track_alias: Optional[int] = None
+    ) -> SubscribeError:
+        """Create and send a SUBSCRIBE_ERROR response."""
+        logger.info(
+            f"Sending SUBSCRIBE_ERROR: sub-id {subscribe_id}: {reason} ({error_code})")
+
+        message = SubscribeError(
+            subscribe_id=subscribe_id,
+            error_code=error_code,
+            reason=reason,
+            track_alias=track_alias
+        )
+        self.send_control_message(message.serialize())
+        return message
+
+    def announce(
+        self,
+        namespace: Union[str, Tuple[str, ...]],
+        parameters: Optional[Dict[int, bytes]] = None
+    ) -> Announce:
+        """Announce track namespace availability."""
+        namespace_tuple = self._make_namespace_tuple(namespace)
+        logger.info(f"Announcing namespace: {namespace_tuple}")
+
+        message = Announce(
+            namespace=namespace_tuple,
+            parameters=parameters or {}
+        )
+        self.send_control_message(message.serialize())
+        return message
+
+    def unannounce(
+        self,
+        namespace: Tuple[bytes, ...]
+    ) -> None:
+        """Withdraw track namespace announcement."""
+        logger.info(f"Unannouncing namespace: {namespace}")
+
+        self.send_control_message(
+            Unannounce(
+                namespace=namespace
+            ).serialize()
+        )
+
+    def unsubscribe(
+        self,
+        subscribe_id: int
+    ) -> None:
+        """Unsubscribe from a track."""
+        logger.info(f"Unsubscribing from subscription {subscribe_id}")
+
+        self.send_control_message(
+            Unsubscribe(
+                subscribe_id=subscribe_id
+            ).serialize()
+        )
+
+    def subscribe_announces(
+        self,
+        namespace_prefix: str,
+        parameters: Optional[Dict[int, bytes]] = None
+    ) -> None:
+        """Subscribe to announcements for a namespace prefix."""
+        logger.info(f"Subscribe announces: prefix {namespace_prefix}")
+
+        if parameters is None:
+            parameters = {}
+        prefix = self._make_namespace_tuple(namespace_prefix)
+        self.send_control_message(
+            SubscribeAnnounces(
+                namespace_prefix=prefix,
+                parameters=parameters
+            ).serialize()
+        )
+
+    def unsubscribe_announces(
+        self,
+        namespace_prefix: str
+    ) -> None:
+        """Unsubscribe from announcements for a namespace prefix."""
+        logger.info(f"Unsubscribe announces: prefix {namespace_prefix}")
+        prefix = self._make_namespace_tuple(namespace_prefix)
+        self.send_control_message(
+            UnsubscribeAnnounces(
+                namespace_prefix=prefix
             ).serialize()
         )
 

@@ -1,5 +1,5 @@
-from ..types import MessageTypes, TrackStatusCode
-from typing import Dict, Optional
+from ..types import MOQTMessageType, TrackStatusCode
+from typing import Tuple, Dict, Optional
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 from aioquic.buffer import Buffer
@@ -10,38 +10,38 @@ from ..utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def subscribe(self, subscribe_id: int, track_alias: int, namespace: bytes,
-              track_name: bytes, priority: int = 128,
-              direction: int = 0x1, filter_type: int = 0x1,
-              start_group: Optional[int] = None,
-              start_object: Optional[int] = None,
-              end_group: Optional[int] = None,
-              parameters: Optional[Dict[int, bytes]] = None) -> bytes:
-    """Create a SUBSCRIBE message."""
-    msg = Subscribe(
-        type=MessageTypes.SUBSCRIBE,
-        subscribe_id=subscribe_id,
-        track_alias=track_alias,
-        namespace=namespace,
-        track_name=track_name,
-        priority=priority,
-        direction=direction,
-        filter_type=filter_type,
-        start_group=start_group,
-        start_object=start_object,
-        end_group=end_group,
-        parameters=parameters
-    )
-    return msg.serialize()
+# def subscribe(self, subscribe_id: int, track_alias: int, namespace: bytes,
+#               track_name: bytes, priority: int = 128,
+#               direction: int = 0x1, filter_type: int = 0x1,
+#               start_group: Optional[int] = None,
+#               start_object: Optional[int] = None,
+#               end_group: Optional[int] = None,
+#               parameters: Optional[Dict[int, bytes]] = None) -> bytes:
+#     """Create a SUBSCRIBE message."""
+#     msg = Subscribe(
+#         type=MOQTMessageType.SUBSCRIBE,
+#         subscribe_id=subscribe_id,
+#         track_alias=track_alias,
+#         namespace=namespace,
+#         track_name=track_name,
+#         priority=priority,
+#         direction=direction,
+#         filter_type=filter_type,
+#         start_group=start_group,
+#         start_object=start_object,
+#         end_group=end_group,
+#         parameters=parameters
+#     )
+#     return msg.serialize()
 
 
-def unsubscribe(self, subscribe_id: int) -> bytes:
-    """Create an UNSUBSCRIBE message."""
-    msg = Unsubscribe(
-        type=MessageTypes.UNSUBSCRIBE,
-        subscribe_id=subscribe_id
-    )
-    return msg.serialize()
+# def unsubscribe(self, subscribe_id: int) -> bytes:
+#     """Create an UNSUBSCRIBE message."""
+#     msg = Unsubscribe(
+#         type=MOQTMessageType.UNSUBSCRIBE,
+#         subscribe_id=subscribe_id
+#     )
+#     return msg.serialize()
 
 
 def _handle_subscribe_ok(self, buffer: Buffer) -> None:
@@ -85,11 +85,11 @@ def _handle_subscribe_done(self, buffer: Buffer) -> None:
 
 @dataclass
 class TrackStatusRequest(MOQTMessage):
-    namespace: bytes = None  # Tuple encoded
+    namespace: Tuple[bytes, ...] = None  # Tuple encoded
     track_name: bytes = None
 
     def __post_init__(self):
-        self.type = MessageTypes.TRACK_STATUS_REQUEST
+        self.type = MOQTMessageType.TRACK_STATUS_REQUEST
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -140,14 +140,14 @@ class TrackStatusRequest(MOQTMessage):
 
 @dataclass
 class TrackStatus(MOQTMessage):
-    namespace: bytes  # Tuple encoded
+    namespace: Tuple[bytes, ...]  # Tuple encoded
     track_name: bytes
     status_code: TrackStatusCode
     last_group_id: int
     last_object_id: int
 
     def __post_init__(self):
-        self.type = MessageTypes.TRACK_STATUS
+        self.type = MOQTMessageType.TRACK_STATUS
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -220,7 +220,7 @@ class Subscribe(MOQTMessage):
     """SUBSCRIBE message for requesting track data."""
     subscribe_id: int
     track_alias: int
-    namespace: bytes
+    namespace: Tuple[bytes, ...]
     track_name: bytes
     priority: int
     direction: int  # Ascending/Descending
@@ -231,7 +231,7 @@ class Subscribe(MOQTMessage):
     parameters: Optional[Dict[int, bytes]] = None
 
     def __post_init__(self):
-        self.type = MessageTypes.SUBSCRIBE
+        self.type = MOQTMessageType.SUBSCRIBE
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=64)
@@ -241,9 +241,8 @@ class Subscribe(MOQTMessage):
         payload.push_uint_var(self.track_alias)
 
         # Add namespace as tuple
-        namespace_parts = self.namespace.split(b'/')
-        payload.push_uint_var(len(namespace_parts))
-        for part in namespace_parts:
+        payload.push_uint_var(len(self.namespace))
+        for part in self.namespace:
             payload.push_uint_var(len(part))
             payload.push_bytes(part)
 
@@ -274,6 +273,61 @@ class Subscribe(MOQTMessage):
         buf.push_bytes(payload.data)
         return buf.data
 
+    @classmethod
+    def deserialize(cls, buffer: Buffer) -> 'Subscribe':
+        subscribe_id = buffer.pull_uint_var()
+        track_alias = buffer.pull_uint_var()
+
+        # Deserialize namespace tuple
+        tuple_len = buffer.pull_uint_var()
+        namespace = []
+        for _ in range(tuple_len):
+            part_len = buffer.pull_uint_var()
+            namespace.append(buffer.pull_bytes(part_len))
+        namespace = tuple(namespace)
+
+        # Track name
+        track_name_len = buffer.pull_uint_var()
+        track_name = buffer.pull_bytes(track_name_len)
+
+        priority = buffer.pull_uint8()
+        direction = buffer.pull_uint8()
+        filter_type = buffer.pull_uint_var()
+
+        # Handle optional fields based on filter type
+        start_group = None
+        start_object = None
+        end_group = None
+        if filter_type in (3, 4):  # ABSOLUTE_START or ABSOLUTE_RANGE
+            start_group = buffer.pull_uint_var()
+            start_object = buffer.pull_uint_var()
+
+        if filter_type == 4:  # ABSOLUTE_RANGE
+            end_group = buffer.pull_uint_var()
+
+        # Deserialize parameters
+        params = {}
+        param_count = buffer.pull_uint_var()
+        for _ in range(param_count):
+            param_id = buffer.pull_uint_var()
+            param_len = buffer.pull_uint_var()
+            param_value = buffer.pull_bytes(param_len)
+            params[param_id] = param_value
+
+        return cls(
+            subscribe_id=subscribe_id,
+            track_alias=track_alias,
+            namespace=namespace,
+            track_name=track_name,
+            priority=priority,
+            direction=direction,
+            filter_type=filter_type,
+            start_group=start_group,
+            start_object=start_object,
+            end_group=end_group,
+            parameters=params
+        )
+
 
 @dataclass
 class Unsubscribe(MOQTMessage):
@@ -281,7 +335,7 @@ class Unsubscribe(MOQTMessage):
     subscribe_id: int
 
     def __post_init__(self):
-        self.type = MessageTypes.UNSUBSCRIBE
+        self.type = MOQTMessageType.UNSUBSCRIBE
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=8)
@@ -294,6 +348,11 @@ class Unsubscribe(MOQTMessage):
         buf.push_bytes(payload.data)
         return buf.data
 
+    @classmethod
+    def deserialize(cls, buffer: Buffer) -> 'Unsubscribe':
+        subscribe_id = buffer.pull_uint_var()
+        return cls(subscribe_id=subscribe_id)
+
 
 @dataclass
 class SubscribeDone(MOQTMessage):
@@ -304,7 +363,7 @@ class SubscribeDone(MOQTMessage):
     reason: str
 
     def __post_init__(self):
-        self.type = MessageTypes.SUBSCRIBE_DONE
+        self.type = MOQTMessageType.SUBSCRIBE_DONE
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
@@ -353,7 +412,7 @@ class MaxSubscribeId(MOQTMessage):
     subscribe_id: int
 
     def __post_init__(self):
-        self.type = MessageTypes.MAX_SUBSCRIBE_ID
+        self.type = MOQTMessageType.MAX_SUBSCRIBE_ID
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=16)
@@ -378,7 +437,7 @@ class SubscribesBlocked(MOQTMessage):
     maximum_subscribe_id: int
 
     def __post_init__(self):
-        self.type = MessageTypes.SUBSCRIBES_BLOCKED
+        self.type = MOQTMessageType.SUBSCRIBES_BLOCKED
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=16)
@@ -409,7 +468,7 @@ class SubscribeOk(MOQTMessage):
     parameters: Optional[Dict[int, bytes]] = None
 
     def __post_init__(self):
-        self.type = MessageTypes.SUBSCRIBE_OK
+        self.type = MOQTMessageType.SUBSCRIBE_OK
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=64)
@@ -496,7 +555,7 @@ class SubscribeError(MOQTMessage):
     track_alias: int
 
     def __post_init__(self):
-        self.type = MessageTypes.SUBSCRIBE_ERROR
+        self.type = MOQTMessageType.SUBSCRIBE_ERROR
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=64)
@@ -550,7 +609,7 @@ class SubscribeUpdate(MOQTMessage):
     parameters: Optional[Dict[int, bytes]] = None
 
     def __post_init__(self):
-        self.type = MessageTypes.SUBSCRIBE_UPDATE
+        self.type = MOQTMessageType.SUBSCRIBE_UPDATE
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=64)
