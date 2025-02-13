@@ -57,7 +57,7 @@ class Fetch(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'Fetch':
@@ -120,7 +120,7 @@ class FetchCancel(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'FetchCancel':
@@ -160,7 +160,7 @@ class FetchOk(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'FetchOk':
@@ -211,7 +211,7 @@ class FetchError(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'FetchError':

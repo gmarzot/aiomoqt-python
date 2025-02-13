@@ -1,9 +1,9 @@
 [project]
 name = "aiomoqt"
 dynamic = ["version"]
-description = "Python asyncio implementation of the MOQT protocol"
+description = "Python asyncio implementation of the MoQT protocol"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
     { name = "Giovanni Marzot", email = "gmarzot@marzresearch.net" }
@@ -18,7 +18,14 @@ Homepage = "https://github.com/gmarzot/aiomoqt-python"
 Repository = "https://github.com/gmarzot/aiomoqt-python.git"
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = [
+    "pytest",
+]
+
+examples = [
+    "uvloop">=0.5.29,
+    "argparse",
+]
 
 [build-system]
 requires = ["setuptools>=45", "setuptools_scm[toml]>=6.2"]

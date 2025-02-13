@@ -1,86 +1,12 @@
 from ..types import MOQTMessageType, TrackStatusCode
 from typing import Tuple, Dict, Optional
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 from aioquic.buffer import Buffer
 from .base import MOQTMessage
 
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-
-# def subscribe(self, subscribe_id: int, track_alias: int, namespace: bytes,
-#               track_name: bytes, priority: int = 128,
-#               direction: int = 0x1, filter_type: int = 0x1,
-#               start_group: Optional[int] = None,
-#               start_object: Optional[int] = None,
-#               end_group: Optional[int] = None,
-#               parameters: Optional[Dict[int, bytes]] = None) -> bytes:
-#     """Create a SUBSCRIBE message."""
-#     msg = Subscribe(
-#         type=MOQTMessageType.SUBSCRIBE,
-#         subscribe_id=subscribe_id,
-#         track_alias=track_alias,
-#         namespace=namespace,
-#         track_name=track_name,
-#         priority=priority,
-#         direction=direction,
-#         filter_type=filter_type,
-#         start_group=start_group,
-#         start_object=start_object,
-#         end_group=end_group,
-#         parameters=parameters
-#     )
-#     return msg.serialize()
-
-
-# def unsubscribe(self, subscribe_id: int) -> bytes:
-#     """Create an UNSUBSCRIBE message."""
-#     msg = Unsubscribe(
-#         type=MOQTMessageType.UNSUBSCRIBE,
-#         subscribe_id=subscribe_id
-#     )
-#     return msg.serialize()
-
-
-def _handle_subscribe_ok(self, buffer: Buffer) -> None:
-    """Handle SUBSCRIBE_OK message."""
-    subscribe_id = buffer.pull_uint_var()
-    expires = buffer.pull_uint_var()
-    group_order = buffer.pull_uint8()
-    content_exists = buffer.pull_uint8()
-
-    if content_exists == 1:
-        largest_group = buffer.pull_uint_var()
-        largest_object = buffer.pull_uint_var()
-        logger.info(
-            f"Subscription {subscribe_id} OK - Latest Group: {largest_group}, Object: {largest_object}")
-    else:
-        logger.info(f"Subscription {subscribe_id} OK - No content yet")
-
-
-def _handle_subscribe_error(self, buffer: Buffer) -> None:
-    """Handle SUBSCRIBE_ERROR message."""
-    subscribe_id = buffer.pull_uint_var()
-    error_code = buffer.pull_uint_var()
-    reason_len = buffer.pull_uint_var()
-    reason = buffer.pull_bytes(reason_len).decode('utf-8')
-
-    logger.error(
-        f"Subscription {subscribe_id} failed - Error {error_code}: {reason}")
-
-
-def _handle_subscribe_done(self, buffer: Buffer) -> None:
-    """Handle SUBSCRIBE_DONE message."""
-    subscribe_id = buffer.pull_uint_var()
-    status_code = buffer.pull_uint_var()
-    stream_count = buffer.pull_uint_var()
-    reason_len = buffer.pull_uint_var()
-    reason = buffer.pull_bytes(reason_len).decode('utf-8')
-
-    logger.info(
-        f"Subscription {subscribe_id} done - Status {status_code}: {reason}")
 
 
 @dataclass
@@ -118,7 +44,7 @@ class TrackStatusRequest(MOQTMessage):
         buf.push_uint_var(len(self.track_name))
         buf.push_bytes(self.track_name)
 
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'TrackStatusRequest':
@@ -184,7 +110,7 @@ class TrackStatus(MOQTMessage):
         buf.push_uint_var(self.last_group_id)
         buf.push_uint_var(self.last_object_id)
 
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'TrackStatus':
@@ -271,7 +197,7 @@ class Subscribe(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'Subscribe':
@@ -346,7 +272,7 @@ class Unsubscribe(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'Unsubscribe':
@@ -388,7 +314,7 @@ class SubscribeDone(MOQTMessage):
         buf.push_uint_var(len(reason_bytes))
         buf.push_bytes(reason_bytes)
 
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'SubscribeDone':
@@ -423,7 +349,7 @@ class MaxSubscribeId(MOQTMessage):
         buf.push_uint_var(payload_size)
         buf.push_uint_var(self.subscribe_id)
 
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'MaxSubscribeId':
@@ -448,7 +374,7 @@ class SubscribesBlocked(MOQTMessage):
         buf.push_uint_var(payload_size)
         buf.push_uint_var(self.maximum_subscribe_id)
 
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'SubscribesBlocked':
@@ -512,7 +438,7 @@ class SubscribeOk(MOQTMessage):
             buf.push_uint_var(len(param_value))
             buf.push_bytes(param_value)
 
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'SubscribeOk':
@@ -580,7 +506,7 @@ class SubscribeError(MOQTMessage):
         buf.push_bytes(reason_bytes)
         buf.push_uint_var(self.track_alias)
 
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'SubscribeError':
@@ -647,7 +573,7 @@ class SubscribeUpdate(MOQTMessage):
             buf.push_uint_var(len(param_value))
             buf.push_bytes(param_value)
 
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'SubscribeUpdate':

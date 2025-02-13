@@ -1,9 +1,10 @@
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, ClassVar, Tuple, Type
 from aioquic.buffer import Buffer
-from .utils.logger import get_logger
-from .types import ObjectStatus, StreamType, ForwardingPreference
+from .base import MOQTMessage
+from ..utils.logger import get_logger
+from ..types import ObjectStatus, StreamType, ForwardingPreference, DatagramType
 
 logger = get_logger(__name__)
 
@@ -90,7 +91,7 @@ class ObjectHeader:
         elif self.status != ObjectStatus.NORMAL:
             buf.push_uint_var(self.status)
 
-        return buf.data
+        return buf
 
     def serialize_stream(self) -> bytes:
         """Serialize for stream transmission."""
@@ -116,7 +117,7 @@ class ObjectHeader:
             buf.push_uint_var(0)  # Zero length
             buf.push_uint_var(self.status)  # Status code
 
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer, forwarding_preference: ForwardingPreference, 
@@ -237,7 +238,7 @@ class StreamHeaderSubgroup:
         payload.push_uint8(self.publisher_priority)
 
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'StreamHeaderSubgroup':
@@ -270,7 +271,7 @@ class FetchHeader:
         payload.push_uint_var(self.subscribe_id)
 
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'FetchHeader':
@@ -307,7 +308,7 @@ class FetchObject:
             buf.push_uint_var(0)  # Zero length
             buf.push_uint_var(self.status)  # Status code
 
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'FetchObject':
@@ -336,3 +337,126 @@ class FetchObject:
             status=status,
             payload=payload
         )
+        
+
+@dataclass
+class ObjectDatagram(MOQTMessage):
+    """Object datagram message."""
+    track_alias: int
+    group_id: int
+    object_id: int
+    publisher_priority: int
+    payload: bytes = b''
+
+    def __post_init__(self):
+        self.type = DatagramType.OBJECT_DATAGRAM
+
+    def serialize(self) -> bytes:
+        buf = Buffer(capacity=32 + len(self.payload))
+
+        buf.push_uint_var(self.track_alias)
+        buf.push_uint_var(self.group_id)
+        buf.push_uint_var(self.object_id)
+        buf.push_uint8(self.publisher_priority)
+        buf.push_bytes(self.payload)
+
+        return buf
+
+    @classmethod
+    def deserialize(cls, buffer: Buffer) -> 'ObjectDatagram':
+        track_alias = buffer.pull_uint_var()
+        group_id = buffer.pull_uint_var()
+        object_id = buffer.pull_uint_var()
+        publisher_priority = buffer.pull_uint8()
+        payload = buffer.pull_bytes(buffer.capacity - buffer.tell())
+
+        return cls(
+            track_alias=track_alias,
+            group_id=group_id,
+            object_id=object_id,
+            publisher_priority=publisher_priority,
+            payload=payload
+        )
+
+@dataclass
+class ObjectDatagramStatus(MOQTMessage):
+    """Object datagram status message."""
+    track_alias: int
+    group_id: int
+    object_id: int
+    publisher_priority: int
+    status: ObjectStatus
+
+    def __post_init__(self):
+        self.type = DatagramType.OBJECT_DATAGRAM_STATUS
+
+    def serialize(self) -> bytes:
+        buf = Buffer(capacity=32)
+
+        buf.push_uint_var(self.track_alias)
+        buf.push_uint_var(self.group_id)
+        buf.push_uint_var(self.object_id)
+        buf.push_uint8(self.publisher_priority)
+        buf.push_uint_var(self.status)
+
+        return buf
+
+    @classmethod
+    def deserialize(cls, buffer: Buffer) -> 'ObjectDatagramStatus':
+        track_alias = buffer.pull_uint_var()
+        group_id = buffer.pull_uint_var()
+        object_id = buffer.pull_uint_var()
+        publisher_priority = buffer.pull_uint8()
+        status = ObjectStatus(buffer.pull_uint_var())
+
+        return cls(
+            track_alias=track_alias,
+            group_id=group_id,
+            object_id=object_id,
+            publisher_priority=publisher_priority,
+            status=status
+        )
+
+
+class TrackDataParser:
+    # Mapping of stream types to message classes
+    _stream_types: ClassVar[Dict[int, Type[MOQTMessage]]] = {
+        StreamType.STREAM_HEADER_SUBGROUP: StreamHeaderSubgroup,
+        StreamType.FETCH_HEADER: FetchHeader,
+    }
+
+    # Mapping of datagram types to message classes
+    _datagram_types: ClassVar[Dict[int, Type[MOQTMessage]]] = {
+        DatagramType.OBJECT_DATAGRAM: ObjectDatagram,
+        DatagramType.OBJECT_DATAGRAM_STATUS: ObjectDatagramStatus,
+    }
+
+
+
+    def _handle_subgroup_header(self, data: bytes) -> None:
+        """Process subgroup header messages."""
+        if len(data) >= 13:
+            group_id = int.from_bytes(data[1:5], 'big')
+            subgroup_id = int.from_bytes(data[5:9], 'big')
+            priority = data[9]
+            logger.info("  Message type: STREAM_HEADER_SUBGROUP")
+            logger.info(f"  Group: {group_id}")
+            logger.info(f"  Subgroup: {subgroup_id}")
+            logger.info(f"  Priority: {priority}")
+
+    def _handle_object_data(self, data: bytes) -> None:
+        """Process object data messages."""
+        group_id = int.from_bytes(data[0:4], 'big')
+        subgroup_id = int.from_bytes(data[4:8], 'big')
+        object_id = int.from_bytes(data[8:12], 'big')
+        payload = data[12:]
+
+        # Update statistics
+        self._groups[group_id]['objects'] += 1
+        self._groups[group_id]['subgroups'].add(subgroup_id)
+
+        logger.info("  Object received:")
+        logger.info(f"    Group: {group_id}")
+        logger.info(f"    Subgroup: {subgroup_id}")
+        logger.info(f"    Object: {object_id}")
+        logger.info(f"    Payload size: {len(payload)}")

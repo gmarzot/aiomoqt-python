@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Any
 from aioquic.buffer import Buffer
 from .base import MOQTMessage
 from ..types import MOQTMessageType, SetupParamType
@@ -17,7 +17,7 @@ class ServerSetup(MOQTMessage):
     def __post_init__(self):
         self.type = MOQTMessageType.SERVER_SETUP
 
-    def serialize(self) -> bytes:
+    def serialize(self) -> Buffer:
         buf = Buffer(capacity=32)
         payload = Buffer(capacity=32)
 
@@ -35,7 +35,7 @@ class ServerSetup(MOQTMessage):
         buf.push_uint_var(self.type)  # SERVER_SETUP type
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'ServerSetup':
@@ -43,26 +43,11 @@ class ServerSetup(MOQTMessage):
         version = buffer.pull_uint_var()
         param_count = buffer.pull_uint_var()
 
-        logger.info(
-            f"SERVER_SETUP: version: {hex(version)} params: {param_count} ")
         params = {}
         for _ in range(param_count):
             param_id = buffer.pull_uint_var()
             param_len = buffer.pull_uint_var()
             param_value = buffer.pull_bytes(param_len)
-            if (param_id == SetupParamType.MAX_SUBSCRIBER_ID):
-                id = "MAX_SUBSCRIBER_ID"
-                param_value = Buffer(data=param_value).pull_uint_var()
-            elif (param_id == SetupParamType.CLIENT_ROLE):
-                id = "CLIENT_ROLE"
-            elif (param_id == SetupParamType.ENDPOINT_PATH):
-                id = "ENDPOINT_PATH"
-            else:
-                id = "UNKNOWN"
-                logger.error(
-                    f"_handle_server_setup: received unknown setup param type: {hex(param_id)}")
-            logger.debug(
-                f"  param: id: {id} ({hex(param_id)}) len: {param_len} val: {param_value}")
             params[param_id] = param_value
         return cls(selected_version=version, parameters=params)
         # self.protocol._moqt_session.set()
@@ -72,12 +57,12 @@ class ServerSetup(MOQTMessage):
 class ClientSetup(MOQTMessage):
     """CLIENT_SETUP message for initializing MOQT session."""
     versions: List[int] = None
-    parameters: Dict[int, bytes] = None
+    parameters: Dict[int, Any] = None
 
     def __post_init__(self):
         self.type = MOQTMessageType.CLIENT_SETUP
 
-    def serialize(self) -> bytes:
+    def serialize(self) -> Buffer:
         buf = Buffer(capacity=32)
         payload = Buffer(capacity=32)
 
@@ -97,7 +82,7 @@ class ClientSetup(MOQTMessage):
         buf.push_uint_var(self.type)  # CLIENT_SETUP type
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> None:
@@ -142,7 +127,7 @@ class GoAway(MOQTMessage):
     def __post_init__(self):
         self.type = MOQTMessageType.GOAWAY
 
-    def serialize(self) -> bytes:
+    def serialize(self) -> Buffer:
         buf = Buffer(capacity=32 + len(self.new_session_uri))
 
         # Calculate payload size
@@ -158,7 +143,7 @@ class GoAway(MOQTMessage):
         buf.push_uint_var(len(uri_bytes))
         buf.push_bytes(uri_bytes)
 
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'GoAway':

@@ -1,33 +1,26 @@
 #!/usr/bin/env python3
-
+import uvloop
+import asyncio
 import argparse
 import logging
-import ssl
 
-import asyncio
 from aioquic.h3.connection import H3_ALPN
-from aioquic.quic.configuration import QuicConfiguration
 from aiomoqt.types import ParamType
-from aiomoqt.client import MOQTClient, connect
-from aiomoqt.utils.logger import get_logger, set_log_level, QuicDebugLogger
+from aiomoqt.client import MOQTClientSession
+from aiomoqt.messages.announce import SubscribeAnnouncesOk
+from aiomoqt.messages.subscribe import SubscribeOk
+from aiomoqt.utils.logger import get_logger, set_log_level
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='MOQT WebTransport Client')
-    parser.add_argument('--host', type=str, default='localhost',
-                        help='Host to connect to')
-    parser.add_argument('--port', type=int, default=4433,
-                        help='Port to connect to')
-    parser.add_argument('--namespace', type=str, required=True,
-                        help='Track namespace')
-    parser.add_argument('--trackname', type=str, required=True,
-                        help='Track name')
-    parser.add_argument('--endpoint', type=str, required=True,
-                        help='MOQT WT endpoint')
-    parser.add_argument('--timeout', type=int, default=30,
-                        help='How long to run before unsubscribing (seconds)')
-    parser.add_argument('--debug', action='store_true',
-                        help='Enable debug output')
+    parser.add_argument('--host', type=str, default='localhost', help='Host to connect to')
+    parser.add_argument('--port', type=int, default=4433, help='Port to connect to')
+    parser.add_argument('--namespace', type=str, default="live/test", help='Track Namespace')
+    parser.add_argument('--trackname', type=str, default="track", help='Track Name')
+    parser.add_argument('--endpoint', type=str, default="moq", help='MOQT WT endpoint')
+    parser.add_argument('--timeout', type=int, default=10, help='connection/response tomeout')
+    parser.add_argument('--debug', action='store_true', help='Enable debug output')
     return parser.parse_args()
 
 
@@ -35,38 +28,45 @@ async def main(host: str, port: int, endpoint: str, namespace: str, trackname: s
     log_level = logging.DEBUG if debug else logging.INFO
     set_log_level(log_level)
     logger = get_logger(__name__)
-    try:
-        configuration = QuicConfiguration(
-            alpn_protocols=H3_ALPN,
-            is_client=True,
-            verify_mode=ssl.CERT_NONE,
-            quic_logger=QuicDebugLogger() if debug else None,
-            secrets_log_file=open("/tmp/keylog.client.txt",
-                                  "a") if debug else None
-        )
 
-        client = MOQTClient(host, port, endpoint=endpoint,
-                            configuration=configuration, debug=debug)
+    client = MOQTClientSession(
+        host, port, endpoint=endpoint,
+        debug=debug
+    )
+    logger.info(f"MOQT publish session connecting: {client}")
+    async with client.connect() as session:
+        try: 
+            response = await session.initialize()
+            response = await session.subscribe_announces(
+                namespace_prefix=namespace,
+                parameters={ParamType.AUTHORIZATION_INFO: b"auth-token-123"},
+                wait_response=True
+            )
+            if not isinstance(response, SubscribeAnnouncesOk):
+                logger.error(f"SubscribeAnnounces error: {response}")
+                raise RuntimeError(response)
+            logger.info(f"SubscribeAnnounces response: {response}")
+            response = await session.subscribe(
+                namespace=namespace, track_name=trackname, wait_response=True
+            )
+            if not isinstance(response, SubscribeOk):
+                # logger.error(f"Subscribe error: {response}")
+                raise RuntimeError(response)
+            # process subscription - publisher will open stream and send data
+            close = await session._moqt_session_close
+            logger.info(f"exiting client session: {close}")
+        except Exception as e:
+            logger.error(f"MOQT session error: {e}")
+            code, reason = session._close if session._close is not None else (0,"Session Closed")
+            session.close(error_code=code, reason_phrase=reason)
+            pass
+        
+    logger.info(f"MOQT publish session closed: {client}")
 
-        async with client.connect() as client_session:
-            await asyncio.wait_for(client_session.initialize(), timeout=30)
-            client_session.subscribe_announces(namespace_prefix=namespace,
-                                    parameters={ParamType.AUTHORIZATION_INFO: b"auth-token-123"})
-            await asyncio.sleep(timeout)
-            client_session.subscribe(
-                namespace=namespace, track_name=trackname)
-            await asyncio.sleep(timeout)
-            logger.info(f"still in context: {client_session}")
-
-        logger.info(f"finished: client: {client}")
-
-    except asyncio.TimeoutError:
-        logger.error("Operation timed out")
-        raise
 
 if __name__ == "__main__":
     args = parse_args()
-    asyncio.run(main(
+    uvloop.run(main(
         host=args.host,
         port=args.port,
         endpoint=args.endpoint,
@@ -74,4 +74,4 @@ if __name__ == "__main__":
         trackname=args.trackname,
         timeout=args.timeout,
         debug=args.debug
-    ))
+    ), debug=args.debug)

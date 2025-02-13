@@ -37,7 +37,7 @@ class Announce(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'Announce':
@@ -80,7 +80,7 @@ class AnnounceOk(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'AnnounceOk':
@@ -119,7 +119,7 @@ class AnnounceError(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'AnnounceError':
@@ -154,7 +154,7 @@ class Unannounce(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'Unannounce':
@@ -193,7 +193,7 @@ class AnnounceCancel(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'AnnounceCancel':
@@ -235,7 +235,7 @@ class SubscribeAnnounces(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'SubscribeAnnounces':
@@ -275,7 +275,7 @@ class SubscribeAnnouncesOk(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'SubscribeAnnouncesOk':
@@ -314,7 +314,7 @@ class SubscribeAnnouncesError(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'SubscribeAnnouncesError':
@@ -349,7 +349,7 @@ class UnsubscribeAnnounces(MOQTMessage):
         buf.push_uint_var(self.type)
         buf.push_uint_var(len(payload.data))
         buf.push_bytes(payload.data)
-        return buf.data
+        return buf
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'UnsubscribeAnnounces':

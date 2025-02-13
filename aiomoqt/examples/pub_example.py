@@ -8,7 +8,7 @@ import asyncio
 from aioquic.h3.connection import H3_ALPN
 from aioquic.quic.configuration import QuicConfiguration
 from aiomoqt.types import ParamType
-from aiomoqt.client import MOQTClient, connect
+from aiomoqt.client import MOQTClientSession
 from aiomoqt.utils.logger import get_logger, set_log_level, QuicDebugLogger
 
 
@@ -35,31 +35,30 @@ async def main(host: str, port: int, endpoint: str, namespace: str, trackname: s
     log_level = logging.DEBUG if debug else logging.INFO
     set_log_level(log_level)
     logger = get_logger(__name__)
-    try:
-        configuration = QuicConfiguration(
-            alpn_protocols=H3_ALPN,
-            is_client=True,
-            verify_mode=ssl.CERT_NONE,
-            quic_logger=QuicDebugLogger() if debug else None,
-            secrets_log_file=open("/tmp/keylog.client.txt",
-                                  "a") if debug else None
-        )
 
-        client = MOQTClient(host, port, endpoint=endpoint,
-                            configuration=configuration, debug=debug)
+    client = MOQTClientSession(host, port, endpoint=endpoint, debug=debug)
+    logger.info(f"Opening MOQT client session: {client}")
+    async with client.connect() as session:
+        try: 
+            await session.initialize()
+            logger.info(f"Publish namespace via ANNOUNCE: {namespace}")
+            response = await session.announce(
+                namespace=namespace,
+                parameters={ParamType.AUTHORIZATION_INFO: b"auth-token-123"},
+                wait_response=True,
+            )
+            logger.info(f"Announce reponse: {response}")
+            # process subscription - publisher will open stream and send data
+            close = await session._moqt_session_close
+            logger.info(f"exiting client session: {close}")
+        except Exception as e:
+            logger.error(f"MOQT session error: {e}")
+            code, reason = session._close if session._close is not None else (0,"Session Closed")
+            session.close(error_code=code, reason_phrase=reason)
+            pass
+    
+    logger.info(f"MOQT client session closed: {client}")
 
-        async with client.connect() as client_session:
-            await asyncio.wait_for(client_session.initialize(), timeout=30)
-            client_session.announce(namespace=namespace,
-                                    parameters={ParamType.AUTHORIZATION_INFO: b"auth-token-123"})
-            await asyncio.sleep(timeout)
-            logger.info(f"still in context: {client_session.__class__.__name__}")
-
-        logger.info(f"finished: client session: {client.__class__.__name__}")
-
-    except asyncio.TimeoutError:
-        logger.error("Operation timed out")
-        raise
 
 if __name__ == "__main__":
     args = parse_args()
