@@ -1,6 +1,6 @@
 import pytest
-from aiomoqt.protocol import MOQTProtocol
-from aiomoqt.client import MOQTClient
+from aiomoqt.protocol import MOQTSessionProtocol
+from aiomoqt.client import MOQTClientSession
 from aiomoqt.types import *
 from aiomoqt.messages import *
 
