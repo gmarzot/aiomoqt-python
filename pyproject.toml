@@ -23,7 +23,7 @@ test = [
 ]
 
 examples = [
-    "uvloop">=0.5.29,
+    "uvloop>=0.5.29",
     "argparse",
 ]
 
