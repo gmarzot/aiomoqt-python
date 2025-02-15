@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import Dict, List, Any
 from aioquic.buffer import Buffer
-from .base import MOQTMessage
-from ..types import MOQTMessageType, SetupParamType
+from .base import MOQTMessage, BUF_SIZE
+from ..types import *
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -18,8 +18,8 @@ class ServerSetup(MOQTMessage):
         self.type = MOQTMessageType.SERVER_SETUP
 
     def serialize(self) -> Buffer:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         # Add selected version
         payload.push_uint_var(self.selected_version)
@@ -63,8 +63,8 @@ class ClientSetup(MOQTMessage):
         self.type = MOQTMessageType.CLIENT_SETUP
 
     def serialize(self) -> Buffer:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         # Add versions
         payload.push_uint_var(len(self.versions))
@@ -128,19 +128,16 @@ class GoAway(MOQTMessage):
         self.type = MOQTMessageType.GOAWAY
 
     def serialize(self) -> Buffer:
-        buf = Buffer(capacity=32 + len(self.new_session_uri))
-
-        # Calculate payload size
-        payload_size = 1  # uri length varint
-        payload_size += len(self.new_session_uri.encode())  # uri bytes
-
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
+        
+        uri_bytes = self.new_session_uri.encode()
+        payload.push_uint_var(len(uri_bytes))  # uri bytes
+        payload.push_bytes(uri_bytes)
+        
         # Write message
         buf.push_uint_var(self.type)
-        buf.push_uint_var(payload_size)
-
-        # Write URI length and data
-        uri_bytes = self.new_session_uri.encode()
-        buf.push_uint_var(len(uri_bytes))
+        buf.push_uint_var(payload.tell())
         buf.push_bytes(uri_bytes)
 
         return buf

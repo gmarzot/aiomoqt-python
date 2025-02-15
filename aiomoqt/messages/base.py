@@ -1,11 +1,12 @@
-import inspect
-import asyncio
+from typing import Any
 from dataclasses import dataclass, fields
 from aioquic.buffer import Buffer
-from ..types import SetupParamType
+from ..types import *
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+BUF_SIZE = 64
 
 
 @dataclass
@@ -13,14 +14,13 @@ class MOQTMessage:
     """Base class for all MOQT messages."""
     # type: Optional[int] = None - let subclass set it - annoying warnings
 
-    def serialize(self) -> bytes:
-        """Convert message to complete wire format."""
-        raise NotImplementedError()
-
-    @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'MOQTMessage':
-        """Create message from buffer containing payload."""
-        raise NotImplementedError()
+    @staticmethod
+    def _bytes_encode(value: Any) -> bytes:
+        if isinstance(value, int):
+            return MOQTMessage._varint_encode(value)
+        if isinstance(value, str):
+            return value.encode()
+        return value
 
     @staticmethod
     def _varint_encode(value: int) -> bytes:
@@ -32,6 +32,15 @@ class MOQTMessage:
     def _varint_decode(data: bytes) -> int:
         buf = Buffer(data=data)
         return buf.pull_uint_var()
+
+    def serialize(self) -> bytes:
+        """Convert message to complete wire format."""
+        raise NotImplementedError()
+
+    @classmethod
+    def deserialize(cls, buffer: Buffer) -> 'MOQTMessage':
+        """Create message from buffer containing payload."""
+        raise NotImplementedError()
 
     def __str__(self) -> str:
         """Generic string representation showing all fields."""
@@ -48,8 +57,9 @@ class MOQTMessage:
             elif field.name == "parameters":
                 # Decode parameter types and values
                 items = []
+                enum = SetupParamType if self.__class__.__name__.endswith('Setup') else ParamType
                 for k, v in value.items():
-                    param_name = SetupParamType(k).name  # Convert enum value to name
+                    param_name = enum(k).name  # Convert enum value to name
                     try:
                         # Try to decode value as varint
                         param_value = v if isinstance(v, int) else self._varint_decode(v)

@@ -1,8 +1,8 @@
 from dataclasses import dataclass
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Tuple
 from aioquic.buffer import Buffer
-from .base import MOQTMessage 
-from ..types import MOQTMessageType
+from .base import MOQTMessage, BUF_SIZE
+from ..types import *
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -25,8 +25,8 @@ class Fetch(MOQTMessage):
         self.type = MOQTMessageType.FETCH
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(self.subscribe_id)
 
@@ -112,8 +112,8 @@ class FetchCancel(MOQTMessage):
         self.type = MOQTMessageType.FETCH_CANCEL
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(self.subscribe_id)
 
@@ -141,8 +141,8 @@ class FetchOk(MOQTMessage):
         self.type = MOQTMessageType.FETCH_OK
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(self.subscribe_id)
         payload.push_uint8(self.group_order)
@@ -198,8 +198,8 @@ class FetchError(MOQTMessage):
         self.type = MOQTMessageType.FETCH_ERROR
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(self.subscribe_id)
         payload.push_uint_var(self.error_code)

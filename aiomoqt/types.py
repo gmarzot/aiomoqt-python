@@ -58,7 +58,11 @@ class SessionCloseCode(IntEnum):
     CONTROL_MESSAGE_TIMEOUT = 0x11
     DATA_STREAM_TIMEOUT = 0x12
 
-
+class ContentExistsCode(IntEnum):
+    """Content Exists Code"""
+    NO_CONTENT = 0x0
+    EXISTS = 0x1
+    
 class SubscribeErrorCode(IntEnum):
     """SUBSCRIBE_ERROR error codes."""
     INTERNAL_ERROR = 0x0

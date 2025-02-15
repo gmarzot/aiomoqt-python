@@ -5,7 +5,7 @@ from importlib.metadata import version
 
 from aioquic.buffer import Buffer, UINT_VAR_MAX
 from aioquic.asyncio.protocol import QuicConnectionProtocol
-from aioquic.quic.connection import QuicConnection
+from aioquic.quic.connection import QuicConnection, QuicErrorCode
 from aioquic.quic.events import QuicEvent, StreamDataReceived
 from aioquic.h3.connection import H3Connection, ErrorCode
 from aioquic.h3.events import HeadersReceived, DataReceived
@@ -129,7 +129,9 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         try:
             async with asyncio.timeout(timeout):
                 result = await self._wt_session_fut
-            logger.debug(f"H3 event: WebTransport setup: {result} ({self._close})")
+            result = "SUCESS" if result else "FAILED"
+            status = "False" if self._close is None else f"True ({self._close})"
+            logger.debug(f"H3 event: WebTransport setup: {result} closed: {status}")
         except asyncio.TimeoutError:
             logger.error("WebTransport session establishment timeout")
             raise
@@ -173,10 +175,11 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         """Handle incoming QUIC events."""
         # Log any errors
         if hasattr(event, 'error_code'):
-            error = getattr(event, 'error_code')
-            reason = getattr(event, 'reason_phrase')
-            logger.error(f"QUIC event: error: {error} reason: {reason}")
-            return
+            error = getattr(event, 'error_code') if hasattr(event, 'error_code') else QuicErrorCode.INTERNAL_ERROR
+            reason = getattr(event, 'reason_phrase') if hasattr(event, 'reason_phrase') else event.__class__.__name__
+            logger.error(f"QUIC error: {error} reason: {reason}")
+            if not self._moqt_session_close.done():
+                self._moqt_session_close.set_result((error,reason))
 
         stream_id = getattr(event, 'stream_id', 'unknown')
         classname = event.__class__.__name__
@@ -189,7 +192,6 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                 msgbuf = Buffer(data=event.data)
                 while msgbuf.tell() < msgbuf.capacity:
                     msg = self.handle_control_message(msgbuf)
-                    logger.debug(f"MOQT event: control message processed: {msg} {msgbuf.tell()}")
                 return
             elif stream_id in self._streams:
                 self.handle_data_message(stream_id, event.data)
@@ -338,7 +340,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         """Close the MOQT session."""
         logger.info(f"MOQT session: Closing: {reason_phrase} ({error_code})")
         if self._session_id is not None:
-            logger.debug(f"H3 session: Closing: stream {self._session_id}")
+            logger.debug(f"H3 session: Closing: stream {self._session_id} {self._h3}")
             self._h3.send_data(self._session_id, b"", end_stream=True)
             self._session_id = None
         self._h3 = None
@@ -351,7 +353,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
 
 
     ################################################################################################
-    #  Outbound MoQT control message API - note: awaitable messages support 'wait_response' param  #
+    #  Outbound control message API - note: awaitable messages support 'wait_response' param       #
     ################################################################################################
     def subscribe(
         self,
@@ -411,7 +413,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                 )
                 logger.error(f"Timeout waiting for subscribe response")
             finally:
-                logger.error(f"Popping off subscribe response future: {subscribe_id}")
+                logger.debug(f"MOQT: removing subscribe response future: {subscribe_id}")
                 self._subscribe_responses.pop(subscribe_id, None)    
             return response
 
@@ -668,9 +670,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         logger.info(f"MOQT handle: {msg}")
         # Set future result for subscriber waiting for response
         future = self._subscribe_responses.get(msg.subscribe_id)
-        logger.debug(f"_handle_subscribe_ok: looking up future: {msg.subscribe_id}: {future}")
         if future and not future.done():
-            logger.debug(f"_handle_subscribe_ok: looking up future: {msg.subscribe_id}: {future}")
             future.set_result(msg)
 
     async def _handle_subscribe_error(self, msg: MOQTMessage) -> None:
@@ -686,7 +686,6 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         logger.info(f"MOQT handle: {msg}")
         # Set future result for announcer waiting for response
         future = self._announce_responses.get(msg.namespace)
-        logger.debug(f"_handle_announce_ok: looking up future: {msg.namespace}: {future}")
         if future and not future.done():
             future.set_result(msg)
 

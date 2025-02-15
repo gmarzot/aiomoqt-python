@@ -72,7 +72,7 @@ For major changes, please open an issue first to discuss your proposal.
 
 ## Resources
 
-- [MoQT Transport Specification](https://moq-wg.github.io/moq-transport/draft-ietf-moq-transport.html)
+- [MoQT Specification](https://moq-wg.github.io/moq-transport/draft-ietf-moq-transport.html)
 - [Media Over QUIC Working Group](https://datatracker.ietf.org/wg/moq/about/)
 - [`aiomoqt` GitHub Repository](https://github.com/gmarzot/aiomoqt-python)
 

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Tuple
 from aioquic.buffer import Buffer
-from .base import MOQTMessage 
+from .base import MOQTMessage, BUF_SIZE 
 from ..types import MOQTMessageType
 from ..utils.logger import get_logger
 
@@ -17,8 +17,8 @@ class Announce(MOQTMessage):
         self.type = MOQTMessageType.ANNOUNCE
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         # Serialize namespace
         payload.push_uint_var(len(self.namespace))
@@ -69,8 +69,8 @@ class AnnounceOk(MOQTMessage):
         self.type = MOQTMessageType.ANNOUNCE_OK
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(len(self.namespace))
         for part in self.namespace:
@@ -102,8 +102,8 @@ class AnnounceError(MOQTMessage):
         self.type = MOQTMessageType.ANNOUNCE_ERROR
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(len(self.namespace))
         for part in self.namespace:
@@ -143,8 +143,8 @@ class Unannounce(MOQTMessage):
         self.type = MOQTMessageType.UNANNOUNCE
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(len(self.namespace))
         for part in self.namespace:
@@ -176,8 +176,8 @@ class AnnounceCancel(MOQTMessage):
         self.type = MOQTMessageType.ANNOUNCE_CANCEL
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(len(self.namespace))
         for part in self.namespace:
@@ -218,8 +218,8 @@ class SubscribeAnnounces(MOQTMessage):
         self.type = MOQTMessageType.SUBSCRIBE_ANNOUNCES
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(len(self.namespace_prefix))
         for part in self.namespace_prefix:
@@ -264,8 +264,8 @@ class SubscribeAnnouncesOk(MOQTMessage):
         self.type = MOQTMessageType.SUBSCRIBE_ANNOUNCES_OK
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(len(self.namespace_prefix))
         for part in self.namespace_prefix:
@@ -297,8 +297,8 @@ class SubscribeAnnouncesError(MOQTMessage):
         self.type = MOQTMessageType.SUBSCRIBE_ANNOUNCES_ERROR
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(len(self.namespace_prefix))
         for part in self.namespace_prefix:
@@ -338,8 +338,8 @@ class UnsubscribeAnnounces(MOQTMessage):
         self.type = MOQTMessageType.UNSUBSCRIBE_ANNOUNCES
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        payload = Buffer(capacity=32)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(len(self.namespace_prefix))
         for part in self.namespace_prefix:

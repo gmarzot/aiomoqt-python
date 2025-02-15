@@ -1,8 +1,8 @@
-from ..types import MOQTMessageType, TrackStatusCode
+from ..types import *
 from typing import Tuple, Dict, Optional
 from dataclasses import dataclass
 from aioquic.buffer import Buffer
-from .base import MOQTMessage
+from .base import MOQTMessage, BUF_SIZE
 
 from ..utils.logger import get_logger
 
@@ -18,31 +18,28 @@ class TrackStatusRequest(MOQTMessage):
         self.type = MOQTMessageType.TRACK_STATUS_REQUEST
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-
-        # Calculate payload size
-        payload_size = 0
-        namespace_parts = self.namespace.split(b'/')
-        payload_size += 1  # num parts varint
-        for part in namespace_parts:
-            payload_size += 1  # part length varint
-            payload_size += len(part)  # part bytes
-        payload_size += 1  # track name length varint
-        payload_size += len(self.track_name)  # track name bytes
-
-        # Write message
-        buf.push_uint_var(self.type)
-        buf.push_uint_var(payload_size)
-
         # Write namespace as tuple
-        buf.push_uint_var(len(namespace_parts))
-        for part in namespace_parts:
-            buf.push_uint_var(len(part))
-            buf.push_bytes(part)
-
+        if not isinstance(self.namespace, tuple):
+            raise ValueError("namespace must be a tuple of bytes")
+        payload = Buffer()
+        payload.push_uint_var(len(self.namespace))
+        for part in self.namespace:
+            if not isinstance(part, bytes):
+                raise ValueError("namespace parts must be bytes")
+            payload.push_uint_var(len(part))
+            payload.push_bytes(part)
+        
         # Write track name
-        buf.push_uint_var(len(self.track_name))
-        buf.push_bytes(self.track_name)
+        if not isinstance(self.track_name, bytes):
+            raise ValueError("track_name must be bytes")
+        payload.push_uint_var(len(self.track_name))
+        payload.push_bytes(self.track_name)
+
+        # Create final message
+        buf = Buffer()  # Extra space for header
+        buf.push_uint_var(self.type)
+        buf.push_uint_var(payload.tell())
+        buf.push_bytes(payload.data)
 
         return buf
 
@@ -76,39 +73,37 @@ class TrackStatus(MOQTMessage):
         self.type = MOQTMessageType.TRACK_STATUS
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-
-        # Calculate payload size
-        payload_size = 0
-        namespace_parts = self.namespace.split(b'/')
-        payload_size += 1  # num parts varint
-        for part in namespace_parts:
-            payload_size += 1  # part length varint
-            payload_size += len(part)  # part bytes
-        payload_size += 1  # track name length varint
-        payload_size += len(self.track_name)  # track name bytes
-        payload_size += 1  # status code varint
-        payload_size += 1  # last group id varint
-        payload_size += 1  # last object id varint
-
-        # Write message
-        buf.push_uint_var(self.type)
-        buf.push_uint_var(payload_size)
-
+        # First encode the payload
+        payload = Buffer(capacity=BUF_SIZE)
+        
         # Write namespace as tuple
-        buf.push_uint_var(len(namespace_parts))
-        for part in namespace_parts:
-            buf.push_uint_var(len(part))
-            buf.push_bytes(part)
-
+        if not isinstance(self.namespace, tuple):
+            raise ValueError("namespace must be a tuple of bytes")
+        payload.push_uint_var(len(self.namespace))
+        for part in self.namespace:
+            if not isinstance(part, bytes):
+                raise ValueError("namespace parts must be bytes")
+            payload.push_uint_var(len(part))
+            payload.push_bytes(part)
+        
         # Write track name
-        buf.push_uint_var(len(self.track_name))
-        buf.push_bytes(self.track_name)
+        if not isinstance(self.track_name, bytes):
+            raise ValueError("track_name must be bytes")
+        payload.push_uint_var(len(self.track_name))
+        payload.push_bytes(self.track_name)
 
         # Write status info
-        buf.push_uint_var(self.status_code)
-        buf.push_uint_var(self.last_group_id)
-        buf.push_uint_var(self.last_object_id)
+        if not isinstance(self.status_code, TrackStatusCode):
+            raise ValueError("status_code must be TrackStatusCode enum")
+        payload.push_uint_var(self.status_code.value)
+        payload.push_uint_var(self.last_group_id)
+        payload.push_uint_var(self.last_object_id)
+
+        # Create final message
+        buf = Buffer(capacity=BUF_SIZE)
+        buf.push_uint_var(self.type)
+        buf.push_uint_var(payload.tell())
+        buf.push_bytes(payload.data)
 
         return buf
 
@@ -160,8 +155,8 @@ class Subscribe(MOQTMessage):
         self.type = MOQTMessageType.SUBSCRIBE
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=64)
-        payload = Buffer(capacity=64)
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(self.subscribe_id)
         payload.push_uint_var(self.track_alias)
@@ -191,6 +186,7 @@ class Subscribe(MOQTMessage):
         payload.push_uint_var(len(parameters))
         for param_id, param_value in parameters.items():
             payload.push_uint_var(param_id)
+            param_value = MOQTMessage._bytes_encode(param_value)
             payload.push_uint_var(len(param_value))
             payload.push_bytes(param_value)
 
@@ -264,14 +260,13 @@ class Unsubscribe(MOQTMessage):
         self.type = MOQTMessageType.UNSUBSCRIBE
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=8)
-        payload = Buffer(capacity=8)
+        buf = Buffer(capacity=BUF_SIZE)
 
-        payload.push_uint_var(self.subscribe_id)
+        payload = MOQTMessage._varint_encode(self.subscribe_id)
 
         buf.push_uint_var(self.type)
-        buf.push_uint_var(len(payload.data))
-        buf.push_bytes(payload.data)
+        buf.push_uint_var(len(payload))
+        buf.push_bytes(payload)
         return buf
 
     @classmethod
@@ -292,27 +287,28 @@ class SubscribeDone(MOQTMessage):
         self.type = MOQTMessageType.SUBSCRIBE_DONE
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
+        # First encode the payload
+        payload = Buffer(capacity=BUF_SIZE)
+        
+        # Write payload fields
+        payload.push_uint_var(self.subscribe_id)
+        if not isinstance(self.status_code, SubscribeDoneCode):
+            raise ValueError("status_code must be SubscribeDoneCode enum")
+        payload.push_uint_var(self.status_code.value)
+        payload.push_uint_var(self.stream_count)
 
-        # Write message type and calculate payload size
-        payload_size = 0
-        payload_size += 1  # subscribe_id varint
-        payload_size += 1  # status_code varint
-        payload_size += 1  # stream_count varint
+        # Convert and write reason string
+        if not isinstance(self.reason, str):
+            raise ValueError("reason must be str")
         reason_bytes = self.reason.encode()
-        payload_size += 1  # reason length varint
-        payload_size += len(reason_bytes)  # reason string
+        payload.push_uint_var(len(reason_bytes))
+        payload.push_bytes(reason_bytes)
 
-        # Write header
+        # Create final message
+        buf = Buffer(capacity=BUF_SIZE)
         buf.push_uint_var(self.type)
-        buf.push_uint_var(payload_size)
-
-        # Write payload
-        buf.push_uint_var(self.subscribe_id)
-        buf.push_uint_var(self.status_code)
-        buf.push_uint_var(self.stream_count)
-        buf.push_uint_var(len(reason_bytes))
-        buf.push_bytes(reason_bytes)
+        buf.push_uint_var(payload.tell())
+        buf.push_bytes(payload.data)
 
         return buf
 
@@ -341,13 +337,13 @@ class MaxSubscribeId(MOQTMessage):
         self.type = MOQTMessageType.MAX_SUBSCRIBE_ID
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=16)
+        buf = Buffer(capacity=BUF_SIZE)
 
-        payload_size = 1  # subscribe_id varint
+        payload = MOQTMessage._varint_encode(self.subscribe_id)  # subscribe_id varint
 
         buf.push_uint_var(self.type)
-        buf.push_uint_var(payload_size)
-        buf.push_uint_var(self.subscribe_id)
+        buf.push_uint_var(len(payload))
+        buf.push_uint_var(payload)
 
         return buf
 
@@ -387,56 +383,46 @@ class SubscribeOk(MOQTMessage):
     """SUBSCRIBE_OK message indicating successful subscription."""
     subscribe_id: int
     expires: int
-    group_order: int  # 0x1=Ascending, 0x2=Descending
-    content_exists: int  # 0 or 1
-    largest_group_id: Optional[int] = None  # Only if content_exists=1
-    largest_object_id: Optional[int] = None  # Only if content_exists=1
+    group_order: GroupOrder  # 0x1=Ascending, 0x2=Descending
+    content_exists: ContentExistsCode  # 0x0=No Content or 0x1=Exists
+    largest_group_id: Optional[int] = None  # Only if content exists
+    largest_object_id: Optional[int] = None  # Only if content exists
     parameters: Optional[Dict[int, bytes]] = None
 
     def __post_init__(self):
         self.type = MOQTMessageType.SUBSCRIBE_OK
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=64)
+        # First encode the payload
+        payload = Buffer(capacity=BUF_SIZE)
+        
+        # Required fields
+        payload.push_uint_var(self.subscribe_id)
+        payload.push_uint_var(self.expires)
+        payload.push_uint8(self.group_order.value)
+        payload.push_uint8(self.content_exists)
 
-        # Calculate payload size
-        payload_size = 0
-        payload_size += 1  # subscribe_id varint
-        payload_size += 1  # expires varint
-        payload_size += 1  # group_order uint8
-        payload_size += 1  # content_exists uint8
+        # Largest group/object IDs only present if content_exists=1
+        if self.content_exists == ContentExistsCode.EXISTS:
+            if self.largest_group_id is None or self.largest_object_id is None:
+                raise ValueError("largest_group_id and largest_object_id required when content_exists=1")
+            payload.push_uint_var(self.largest_group_id)
+            payload.push_uint_var(self.largest_object_id)
 
-        if self.content_exists == 1:
-            payload_size += 1  # largest_group_id varint
-            payload_size += 1  # largest_object_id varint
-
+        # Parameters
         parameters = self.parameters or {}
-        payload_size += 1  # parameter count varint
-        for param_id, param_value in parameters.items():
-            payload_size += 1  # param id varint
-            payload_size += 1  # param length varint
-            payload_size += len(param_value)  # param value
+        payload.push_uint_var(len(parameters))
+        for param_type, param_value in parameters.items():
+            payload.push_uint_var(param_type)
+            param_value = MOQTMessage._bytes_encode(param_value)
+            payload.push_uint_var(len(param_value))
+            payload.push_bytes(param_value)
 
-        # Write message
+        # Create final message
+        buf = Buffer(capacity=BUF_SIZE)
         buf.push_uint_var(self.type)
-        buf.push_uint_var(payload_size)
-
-        # Write payload fields
-        buf.push_uint_var(self.subscribe_id)
-        buf.push_uint_var(self.expires)
-        buf.push_uint8(self.group_order)
-        buf.push_uint8(self.content_exists)
-
-        if self.content_exists == 1:
-            buf.push_uint_var(self.largest_group_id or 0)
-            buf.push_uint_var(self.largest_object_id or 0)
-
-        # Write parameters
-        buf.push_uint_var(len(parameters))
-        for param_id, param_value in parameters.items():
-            buf.push_uint_var(param_id)
-            buf.push_uint_var(len(param_value))
-            buf.push_bytes(param_value)
+        buf.push_uint_var(len(payload.data))
+        buf.push_bytes(payload.data)
 
         return buf
 
@@ -444,22 +430,22 @@ class SubscribeOk(MOQTMessage):
     def deserialize(cls, buffer: Buffer) -> 'SubscribeOk':
         subscribe_id = buffer.pull_uint_var()
         expires = buffer.pull_uint_var()
-        group_order = buffer.pull_uint8()
+        group_order = GroupOrder(buffer.pull_uint8())
         content_exists = buffer.pull_uint8()
 
         largest_group_id = None
         largest_object_id = None
-        if content_exists == 1:
+        if content_exists == ContentExistsCode.EXISTS:
             largest_group_id = buffer.pull_uint_var()
             largest_object_id = buffer.pull_uint_var()
 
-        param_count = buffer.pull_uint_var()
         parameters = {}
+        param_count = buffer.pull_uint_var()
         for _ in range(param_count):
             param_id = buffer.pull_uint_var()
             param_len = buffer.pull_uint_var()
             param_value = buffer.pull_bytes(param_len)
-            parameters[param_id] = param_value
+            parameters[ParamType(param_id)] = param_value
 
         return cls(
             subscribe_id=subscribe_id,
@@ -470,7 +456,6 @@ class SubscribeOk(MOQTMessage):
             largest_object_id=largest_object_id,
             parameters=parameters
         )
-
 
 @dataclass
 class SubscribeError(MOQTMessage):
@@ -484,27 +469,28 @@ class SubscribeError(MOQTMessage):
         self.type = MOQTMessageType.SUBSCRIBE_ERROR
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=64)
+        # First encode the payload
+        payload = Buffer(capacity=BUF_SIZE)
+        
+        payload.push_uint_var(self.subscribe_id)
+        if not isinstance(self.error_code, SubscribeErrorCode):
+            raise ValueError("error_code must be SubscribeErrorCode enum")
+        payload.push_uint_var(self.error_code.value)
 
-        # Calculate payload size
+        # Convert and write reason string
+        if not isinstance(self.reason, str):
+            raise ValueError("reason must be str")
         reason_bytes = self.reason.encode()
-        payload_size = 0
-        payload_size += 1  # subscribe_id varint
-        payload_size += 1  # error_code varint
-        payload_size += 1  # reason length varint
-        payload_size += len(reason_bytes)  # reason string
-        payload_size += 1  # track_alias varint
+        payload.push_uint_var(len(reason_bytes))
+        payload.push_bytes(reason_bytes)
+        
+        payload.push_uint_var(self.track_alias)
 
-        # Write message
+        # Create final message
+        buf = Buffer(capacity=BUF_SIZE)
         buf.push_uint_var(self.type)
-        buf.push_uint_var(payload_size)
-
-        # Write payload fields
-        buf.push_uint_var(self.subscribe_id)
-        buf.push_uint_var(self.error_code)
-        buf.push_uint_var(len(reason_bytes))
-        buf.push_bytes(reason_bytes)
-        buf.push_uint_var(self.track_alias)
+        buf.push_uint_var(payload.tell())
+        buf.push_bytes(payload.data)
 
         return buf
 
@@ -538,40 +524,33 @@ class SubscribeUpdate(MOQTMessage):
         self.type = MOQTMessageType.SUBSCRIBE_UPDATE
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=64)
-
-        # Calculate payload size
-        payload_size = 0
-        payload_size += 1  # subscribe_id varint
-        payload_size += 1  # start_group varint
-        payload_size += 1  # start_object varint
-        payload_size += 1  # end_group varint
-        payload_size += 1  # priority uint8
-
-        parameters = self.parameters or {}
-        payload_size += 1  # parameter count varint
-        for param_id, param_value in parameters.items():
-            payload_size += 1  # param id varint
-            payload_size += 1  # param length varint
-            payload_size += len(param_value)  # param value
-
-        # Write message
-        buf.push_uint_var(self.type)
-        buf.push_uint_var(payload_size)
-
+        # First encode the payload
+        payload = Buffer(capacity=BUF_SIZE)
+        
         # Write payload fields
-        buf.push_uint_var(self.subscribe_id)
-        buf.push_uint_var(self.start_group)
-        buf.push_uint_var(self.start_object)
-        buf.push_uint_var(self.end_group)
-        buf.push_uint8(self.priority)
+        payload.push_uint_var(self.subscribe_id)
+        payload.push_uint_var(self.start_group)
+        payload.push_uint_var(self.start_object)
+        payload.push_uint_var(self.end_group)
+        
+        if not isinstance(self.priority, int) or not 0 <= self.priority <= 255:
+            raise ValueError("priority must be uint8 (0-255)")
+        payload.push_uint8(self.priority)
 
         # Write parameters
-        buf.push_uint_var(len(parameters))
+        parameters = self.parameters or {}
+        payload.push_uint_var(len(parameters))
         for param_id, param_value in parameters.items():
-            buf.push_uint_var(param_id)
-            buf.push_uint_var(len(param_value))
-            buf.push_bytes(param_value)
+            payload.push_uint_var(param_id.value)
+            param_value = MOQTMessage._bytes_encode(param_value)
+            payload.push_uint_var(len(param_value))
+            payload.push_bytes(param_value)
+
+        # Create final message
+        buf = Buffer(capacity=BUF_SIZE)
+        buf.push_uint_var(self.type)
+        buf.push_uint_var(payload.tell())
+        buf.push_bytes(payload.data)
 
         return buf
 

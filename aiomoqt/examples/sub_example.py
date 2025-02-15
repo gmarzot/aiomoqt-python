@@ -19,12 +19,11 @@ def parse_args():
     parser.add_argument('--namespace', type=str, default="live/test", help='Track Namespace')
     parser.add_argument('--trackname', type=str, default="track", help='Track Name')
     parser.add_argument('--endpoint', type=str, default="moq", help='MOQT WT endpoint')
-    parser.add_argument('--timeout', type=int, default=10, help='connection/response tomeout')
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
     return parser.parse_args()
 
 
-async def main(host: str, port: int, endpoint: str, namespace: str, trackname: str, timeout: int,  debug: bool):
+async def main(host: str, port: int, endpoint: str, namespace: str, trackname: str, debug: bool):
     log_level = logging.DEBUG if debug else logging.INFO
     set_log_level(log_level)
     logger = get_logger(__name__)
@@ -33,7 +32,7 @@ async def main(host: str, port: int, endpoint: str, namespace: str, trackname: s
         host, port, endpoint=endpoint,
         debug=debug
     )
-    logger.info(f"MOQT publish session connecting: {client}")
+    logger.info(f"MOQT app: subscribe session connecting: {client}")
     async with client.connect() as session:
         try: 
             response = await session.initialize()
@@ -45,23 +44,30 @@ async def main(host: str, port: int, endpoint: str, namespace: str, trackname: s
             if not isinstance(response, SubscribeAnnouncesOk):
                 logger.error(f"SubscribeAnnounces error: {response}")
                 raise RuntimeError(response)
-            logger.info(f"SubscribeAnnounces response: {response}")
+            logger.info(f"MOQT app: SubscribeAnnounces response: {response}")
             response = await session.subscribe(
-                namespace=namespace, track_name=trackname, wait_response=True
+                namespace=namespace,
+                track_name=trackname,
+                parameters={
+                    ParamType.MAX_CACHE_DURATION: 100,
+                    ParamType.AUTHORIZATION_INFO: b"auth-token-123",
+                    ParamType.DELIVERY_TIMEOUT: 10,
+                },
+                wait_response=True
             )
             if not isinstance(response, SubscribeOk):
                 # logger.error(f"Subscribe error: {response}")
                 raise RuntimeError(response)
             # process subscription - publisher will open stream and send data
             close = await session._moqt_session_close
-            logger.info(f"exiting client session: {close}")
+            logger.info(f"MOQT app: exiting client session: {close}")
         except Exception as e:
-            logger.error(f"MOQT session error: {e}")
+            logger.error(f"MOQT app: session exception: {e}")
             code, reason = session._close if session._close is not None else (0,"Session Closed")
             session.close(error_code=code, reason_phrase=reason)
             pass
         
-    logger.info(f"MOQT publish session closed: {client}")
+    logger.info(f"MOQT app: subscribe session closed: {client}")
 
 
 if __name__ == "__main__":
@@ -72,6 +78,5 @@ if __name__ == "__main__":
         endpoint=args.endpoint,
         namespace=args.namespace,
         trackname=args.trackname,
-        timeout=args.timeout,
         debug=args.debug
     ), debug=args.debug)
