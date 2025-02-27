@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Optional, Dict, ClassVar, Tuple, Type
+from typing import Optional, List, Dict, ClassVar, Tuple, Type
 from aioquic.buffer import Buffer
-from .base import MOQTMessage
+from .base import MOQTMessage, BUF_SIZE
 from ..utils.logger import get_logger
-from ..types import ObjectStatus, StreamType, ForwardingPreference, DatagramType
+from ..types import ObjectStatus, DataStreamType, ForwardingPreference, DatagramType
 
 logger = get_logger(__name__)
 
@@ -60,24 +60,109 @@ class Subgroup:
         """Add an object to the subgroup."""
         self.objects[obj.object_id] = obj
 
+
+@dataclass
+class SubgroupHeader:
+    """MOQT subgroup stream header."""
+    track_alias: int
+    group_id: int
+    subgroup_id: int
+    publisher_priority: int
+
+    def serialize(self) -> Buffer:
+        buf = Buffer(capacity=BUF_SIZE)
+        buf.push_uint_var(DataStreamType.SUBGROUP_HEADER)   
+        buf.push_uint_var(self.track_alias)
+        buf.push_uint_var(self.group_id)
+        buf.push_uint_var(self.subgroup_id)
+        buf.push_uint8(self.publisher_priority)
+
+        return buf
+
+    @classmethod
+    def deserialize(cls, buffer: Buffer) -> 'SubgroupHeader':
+        """MOQT subgroup stream header."""
+        track_alias = buffer.pull_uint_var()
+        group_id = buffer.pull_uint_var()
+        subgroup_id = buffer.pull_uint_var()
+        publisher_priority = buffer.pull_uint8()
+
+        return cls(
+            track_alias=track_alias,
+            group_id=group_id,
+            subgroup_id=subgroup_id,
+            publisher_priority=publisher_priority
+        )
+
+
 @dataclass
 class ObjectHeader:
     """MOQT object header."""
-    track_alias: int
-    group_id: int
     object_id: int
-    publisher_priority: int
-    forwarding_preference: ForwardingPreference
-    subgroup_id: Optional[int] = None  # Only used when forwarding_preference is SUBGROUP
-    status: ObjectStatus = ObjectStatus.NORMAL
+    extensions: Optional[Dict[int, bytes]] = None
+    status: Optional[ObjectStatus] = ObjectStatus.NORMAL
     payload: bytes = b''
 
-    def serialize(self) -> bytes:
-        if self.forwarding_preference == ForwardingPreference.DATAGRAM:
-            return self.serialize_datagram()
-        return self.serialize_stream()
+    def serialize(self) -> Buffer:
+        """Serialize for stream transmission."""
+        payload_len = len(self.payload)
+        buf = Buffer(capacity=(32 + payload_len))
 
-    def serialize_datagram(self) -> bytes:
+        buf.push_uint_var(self.object_id)
+        extensions = self.extensions or {}
+        ext_len = len(extensions)
+        buf.push_uint_var(ext_len)
+        for ext_id, ext_value in extensions.items():
+            if ext_id % 2 == 0:  # even extension types are simple var int
+                buf.push_uint_var(ext_value)
+            else:
+                buf.push_uint_var(len(ext_value))
+                buf.push_bytes(ext_value)
+
+        if self.status == ObjectStatus.NORMAL and self.payload:
+            buf.push_uint_var(payload_len)
+            buf.push_bytes(self.payload)
+        else:
+            buf.push_uint_var(0)  # Zero length
+            buf.push_uint_var(self.status)  # Status code
+
+        return buf
+    
+    @classmethod
+    def deserialize(cls, buffer: Buffer) -> 'ObjectHeader':
+        """Deserialize from stream transmission."""
+        object_id = buffer.pull_uint_var()
+        # Parse extensions
+        extensions = {}
+        ext_count = buffer.pull_uint_var()
+        for _ in range(ext_count):
+            ext_id = buffer.pull_uint_var()
+            if ext_id % 2 == 0:  # even extension types are simple var int
+                ext_value = buffer.pull_uint_var()
+                extensions[ext_id] = ext_value
+            else:
+                ext_value_len = buffer.pull_uint_var()
+                ext_value = buffer.pull_bytes(ext_value_len)
+                extensions[ext_id] = ext_value
+        # Get payload or status
+        payload_len = buffer.pull_uint_var()
+        if payload_len == 0:
+            # Zero length means status code follows
+            status = ObjectStatus(buffer.pull_uint_var())
+            payload = b''
+        else:
+            status = ObjectStatus.NORMAL
+            assert payload_len <= (buffer.capacity - buffer.tell())
+            payload = buffer.pull_bytes(payload_len)
+        
+        return cls(
+            object_id=object_id,
+            extensions=extensions,
+            status=status,
+            payload=payload
+        )
+
+    def serialize_datagram(self) -> bytes:  # XXX seperate class - remove
         """Serialize for datagram transmission."""
         buf = Buffer(capacity=32 + len(self.payload))
 
@@ -92,42 +177,6 @@ class ObjectHeader:
             buf.push_uint_var(self.status)
 
         return buf
-
-    def serialize_stream(self) -> bytes:
-        """Serialize for stream transmission."""
-        buf = Buffer(capacity=32 + len(self.payload))
-
-        if self.forwarding_preference == ForwardingPreference.SUBGROUP:
-            buf.push_uint_var(self.object_id)
-        else:
-            # Track forwarding includes all fields
-            buf.push_uint_var(self.track_alias)
-            buf.push_uint_var(self.group_id)
-            buf.push_uint_var(self.object_id)
-            buf.push_uint8(self.publisher_priority)
-
-        # Handle payload/status
-        if self.status == ObjectStatus.NORMAL:
-            if self.payload:
-                buf.push_uint_var(len(self.payload))
-                buf.push_bytes(self.payload)
-            else:
-                buf.push_uint_var(0)
-        else:
-            buf.push_uint_var(0)  # Zero length
-            buf.push_uint_var(self.status)  # Status code
-
-        return buf
-
-    @classmethod
-    def deserialize(cls, buffer: Buffer, forwarding_preference: ForwardingPreference, 
-                   subgroup_id: Optional[int] = None, stream_header: Optional['StreamHeaderSubgroup'] = None) -> 'ObjectHeader':
-        """Deserialize an object based on its forwarding preference."""
-        if forwarding_preference == ForwardingPreference.DATAGRAM:
-            return cls.deserialize_datagram(buffer)
-        elif forwarding_preference == ForwardingPreference.SUBGROUP and stream_header:
-            return cls.deserialize_subgroup(buffer, stream_header)
-        return cls.deserialize_track(buffer, forwarding_preference, subgroup_id)
 
     @classmethod
     def deserialize_datagram(cls, buffer: Buffer) -> 'ObjectHeader':
@@ -155,34 +204,6 @@ class ObjectHeader:
             object_id=object_id,
             publisher_priority=publisher_priority,
             forwarding_preference=ForwardingPreference.DATAGRAM,
-            status=status,
-            payload=payload
-        )
-
-    @classmethod
-    def deserialize_subgroup(cls, buffer: Buffer, header: 'StreamHeaderSubgroup') -> 'ObjectHeader':
-        """Deserialize an object within a subgroup stream."""
-        object_id = buffer.pull_uint_var()
-        payload_len = buffer.pull_uint_var()
-
-        if payload_len == 0:
-            try:
-                status = ObjectStatus(buffer.pull_uint_var())
-                payload = b''
-            except ValueError as e:
-                logger.error(f"Invalid object status: {e}")
-                raise
-        else:
-            status = ObjectStatus.NORMAL
-            payload = buffer.pull_bytes(payload_len)
-
-        return cls(
-            track_alias=header.track_alias,
-            group_id=header.group_id,
-            object_id=object_id,
-            publisher_priority=header.publisher_priority,
-            forwarding_preference=ForwardingPreference.SUBGROUP,
-            subgroup_id=header.subgroup_id,
             status=status,
             payload=payload
         )
@@ -220,52 +241,13 @@ class ObjectHeader:
         )
 
 @dataclass
-class StreamHeaderSubgroup:
-    """MOQT subgroup stream header."""
-    track_alias: int
-    group_id: int
-    subgroup_id: int
-    publisher_priority: int
-
-    def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-        buf.push_uint_var(StreamType.STREAM_HEADER_SUBGROUP)
-        
-        payload = Buffer(capacity=32)
-        payload.push_uint_var(self.track_alias)
-        payload.push_uint_var(self.group_id)
-        payload.push_uint_var(self.subgroup_id)
-        payload.push_uint8(self.publisher_priority)
-
-        buf.push_bytes(payload.data)
-        return buf
-
-    @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'StreamHeaderSubgroup':
-        stream_type = buffer.pull_uint_var()
-        if stream_type != StreamType.STREAM_HEADER_SUBGROUP:
-            raise ValueError(f"Invalid stream type: {stream_type}")
-
-        track_alias = buffer.pull_uint_var()
-        group_id = buffer.pull_uint_var()
-        subgroup_id = buffer.pull_uint_var()
-        publisher_priority = buffer.pull_uint8()
-
-        return cls(
-            track_alias=track_alias,
-            group_id=group_id,
-            subgroup_id=subgroup_id,
-            publisher_priority=publisher_priority
-        )
-
-@dataclass
 class FetchHeader:
     """MOQT fetch stream header."""
     subscribe_id: int
 
     def serialize(self) -> bytes:
         buf = Buffer(capacity=32)
-        buf.push_uint_var(StreamType.FETCH_HEADER)
+        buf.push_uint_var(DataStreamType.FETCH_HEADER)
         
         payload = Buffer(capacity=32)
         payload.push_uint_var(self.subscribe_id)
@@ -275,9 +257,9 @@ class FetchHeader:
 
     @classmethod
     def deserialize(cls, buffer: Buffer) -> 'FetchHeader':
-        stream_type = buffer.pull_uint_var()
-        if stream_type != StreamType.FETCH_HEADER:
-            raise ValueError(f"Invalid stream type: {stream_type}")
+        # stream_type = buffer.pull_uint_var()
+        # if stream_type != DataStreamType.FETCH_HEADER:
+        #     raise ValueError(f"Invalid stream type: {stream_type}")
 
         subscribe_id = buffer.pull_uint_var()
         return cls(subscribe_id=subscribe_id)
@@ -419,44 +401,7 @@ class ObjectDatagramStatus(MOQTMessage):
 
 
 class TrackDataParser:
-    # Mapping of stream types to message classes
-    _stream_types: ClassVar[Dict[int, Type[MOQTMessage]]] = {
-        StreamType.STREAM_HEADER_SUBGROUP: StreamHeaderSubgroup,
-        StreamType.FETCH_HEADER: FetchHeader,
-    }
 
-    # Mapping of datagram types to message classes
-    _datagram_types: ClassVar[Dict[int, Type[MOQTMessage]]] = {
-        DatagramType.OBJECT_DATAGRAM: ObjectDatagram,
-        DatagramType.OBJECT_DATAGRAM_STATUS: ObjectDatagramStatus,
-    }
-
-
-
-    def _handle_subgroup_header(self, data: bytes) -> None:
-        """Process subgroup header messages."""
-        if len(data) >= 13:
-            group_id = int.from_bytes(data[1:5], 'big')
-            subgroup_id = int.from_bytes(data[5:9], 'big')
-            priority = data[9]
-            logger.info("  Message type: STREAM_HEADER_SUBGROUP")
-            logger.info(f"  Group: {group_id}")
-            logger.info(f"  Subgroup: {subgroup_id}")
-            logger.info(f"  Priority: {priority}")
-
-    def _handle_object_data(self, data: bytes) -> None:
+    def _handle_stream_object_data(self, hdr: MOQTMessage, buf: Buffer) -> None:
         """Process object data messages."""
-        group_id = int.from_bytes(data[0:4], 'big')
-        subgroup_id = int.from_bytes(data[4:8], 'big')
-        object_id = int.from_bytes(data[8:12], 'big')
-        payload = data[12:]
-
-        # Update statistics
-        self._groups[group_id]['objects'] += 1
-        self._groups[group_id]['subgroups'].add(subgroup_id)
-
-        logger.info("  Object received:")
-        logger.info(f"    Group: {group_id}")
-        logger.info(f"    Subgroup: {subgroup_id}")
-        logger.info(f"    Object: {object_id}")
-        logger.info(f"    Payload size: {len(payload)}")
+        logger.debug(f"async handler called for osyr")

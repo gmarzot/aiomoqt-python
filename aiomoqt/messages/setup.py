@@ -87,7 +87,7 @@ class ClientSetup(MOQTMessage):
     @classmethod
     def deserialize(cls, buffer: Buffer) -> None:
         """Handle CLIENT_SETUP message."""
-
+        logger.info(f"CLIENT_SETUP: {buffer.data.hex()} ")
         versions = []
         version_count = buffer.pull_uint_var()
         for _ in range(version_count):
@@ -117,7 +117,7 @@ class ClientSetup(MOQTMessage):
             logger.debug(
                 f"  param: id: {id} ({hex(param_id)}) len: {param_len} val: {param_value}")
 
-            return cls(versions=versions, parameters=params)
+        return cls(versions=versions, parameters=params)
         
 
 @dataclass

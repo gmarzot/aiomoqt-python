@@ -150,6 +150,7 @@ class Subscribe(MOQTMessage):
     start_object: Optional[int] = None
     end_group: Optional[int] = None
     parameters: Optional[Dict[int, bytes]] = None
+    response: Optional['SubscribeOk'] = None
 
     def __post_init__(self):
         self.type = MOQTMessageType.SUBSCRIBE
@@ -317,8 +318,14 @@ class SubscribeDone(MOQTMessage):
         subscribe_id = buffer.pull_uint_var()
         status_code = buffer.pull_uint_var()
         stream_count = buffer.pull_uint_var()
-        reason_len = buffer.pull_uint_var()
-        reason = buffer.pull_bytes(reason_len).decode()
+        try:
+            reason_len = buffer.pull_uint_var()
+            if reason_len > buffer.capacity - buffer.tell():
+                raise ValueError(f"Invalid reason length {reason_len}")
+            reason = buffer.pull_bytes(reason_len).decode()
+        except Exception as e:
+            logger.error(f"Error parsing SUBSCRIBE_DONE reason: {e}")
+            reason = f"parsing error: len: {reason_len}" 
 
         return cls(
             subscribe_id=subscribe_id,

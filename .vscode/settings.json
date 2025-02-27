@@ -8,10 +8,10 @@
   "editor.codeActionsOnSave": {
     "source.organizeImports": "explicit",
   },
-  "editor.formatOnSave": true,
+  "editor.formatOnSave": false,
   "files.autoSave": "afterDelay",
   "[python]": {
-    "editor.defaultFormatter": "ms-python.python",
+    "editor.defaultFormatter": "ms-python.autopep8",
     "editor.rulers": [
       100
     ]

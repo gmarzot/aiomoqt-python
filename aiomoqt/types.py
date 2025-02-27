@@ -1,8 +1,10 @@
 from enum import IntEnum
 
 
-class MOQTMessageType:
+class MOQTMessageType(IntEnum):
     """MOQT message type constants."""
+    CLIENT_SETUP = 0x40
+    SERVER_SETUP = 0x41
     SUBSCRIBE_UPDATE = 0x02
     SUBSCRIBE = 0x03
     SUBSCRIBE_OK = 0x04
@@ -27,8 +29,6 @@ class MOQTMessageType:
     FETCH_OK = 0x18
     FETCH_ERROR = 0x19
     SUBSCRIBES_BLOCKED = 0x1A
-    CLIENT_SETUP = 0x40
-    SERVER_SETUP = 0x41
 
 
 class ParamType(IntEnum):
@@ -119,17 +119,17 @@ class ObjectStatus(IntEnum):
     END_OF_TRACK = 0x5
 
 
-class StreamType(IntEnum):
-    """Stream type identifiers."""
-    STREAM_HEADER_SUBGROUP = 0x4
-    FETCH_HEADER = 0x5
-
-
 class ForwardingPreference(IntEnum):
     """Object forwarding preferences."""
     TRACK = 0x0
     SUBGROUP = 0x1
     DATAGRAM = 0x2
+
+
+class DataStreamType(IntEnum):
+    """Stream type identifiers."""
+    SUBGROUP_HEADER = 0x4
+    FETCH_HEADER = 0x5
 
 
 class DatagramType(IntEnum):

@@ -28,6 +28,8 @@ class MOQTClientSession(MOQTSession):  # New connection manager class
                 alpn_protocols=H3_ALPN,
                 is_client=True,
                 verify_mode=ssl.CERT_NONE,
+                max_datagram_frame_size=65536,
+                max_datagram_size=QuicConfiguration.max_datagram_size,
                 quic_logger=QuicDebugLogger() if debug else None,
                 secrets_log_file=open(
                     "/tmp/keylog.client.txt", "a") if debug else None

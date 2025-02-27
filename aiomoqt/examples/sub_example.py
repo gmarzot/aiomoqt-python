@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-import uvloop
 import asyncio
 import argparse
 import logging
 
 from aioquic.h3.connection import H3_ALPN
-from aiomoqt.types import ParamType
+from aiomoqt.types import ParamType, SessionCloseCode
 from aiomoqt.client import MOQTClientSession
-from aiomoqt.messages.announce import SubscribeAnnouncesOk
-from aiomoqt.messages.subscribe import SubscribeOk
+from aiomoqt.protocol import MOQTException
+from aiomoqt.messages.announce import SubscribeAnnouncesError
+from aiomoqt.messages.subscribe import SubscribeOk, SubscribeError
 from aiomoqt.utils.logger import get_logger, set_log_level
 
 
@@ -35,15 +35,15 @@ async def main(host: str, port: int, endpoint: str, namespace: str, trackname: s
     logger.info(f"MOQT app: subscribe session connecting: {client}")
     async with client.connect() as session:
         try: 
-            response = await session.initialize()
+            response = await session.client_session_init()
             response = await session.subscribe_announces(
                 namespace_prefix=namespace,
                 parameters={ParamType.AUTHORIZATION_INFO: b"auth-token-123"},
                 wait_response=True
             )
-            if not isinstance(response, SubscribeAnnouncesOk):
-                logger.error(f"SubscribeAnnounces error: {response}")
-                raise RuntimeError(response)
+            if isinstance(response, SubscribeAnnouncesError):
+                logger.error(f"MOQT app: {response}")
+                raise MOQTException(response.error_code, response.reason)
             logger.info(f"MOQT app: SubscribeAnnounces response: {response}")
             response = await session.subscribe(
                 namespace=namespace,
@@ -55,28 +55,30 @@ async def main(host: str, port: int, endpoint: str, namespace: str, trackname: s
                 },
                 wait_response=True
             )
-            if not isinstance(response, SubscribeOk):
-                # logger.error(f"Subscribe error: {response}")
-                raise RuntimeError(response)
+            if isinstance(response, SubscribeError):
+                logger.error(f"MOQT app: {response}")
+                raise MOQTException(response.error_code, response.reason)
             # process subscription - publisher will open stream and send data
-            close = await session._moqt_session_close
-            logger.info(f"MOQT app: exiting client session: {close}")
-        except Exception as e:
+            await session.async_closed()
+            logger.info(f"MOQT app: exiting client session")
+        except MOQTException as e:
             logger.error(f"MOQT app: session exception: {e}")
-            code, reason = session._close if session._close is not None else (0,"Session Closed")
-            session.close(error_code=code, reason_phrase=reason)
+            session.close(e.error_code, e.reason_phrase)
             pass
         
-    logger.info(f"MOQT app: subscribe session closed: {client}")
-
+    logger.info(f"MOQT app: subscribe session closed: {client.__class__.__name__}")
 
 if __name__ == "__main__":
-    args = parse_args()
-    uvloop.run(main(
-        host=args.host,
-        port=args.port,
-        endpoint=args.endpoint,
-        namespace=args.namespace,
-        trackname=args.trackname,
-        debug=args.debug
-    ), debug=args.debug)
+    try:
+        args = parse_args()
+        asyncio.run(main(
+            host=args.host,
+            port=args.port,
+            endpoint=args.endpoint,
+            namespace=args.namespace,
+            trackname=args.trackname,
+            debug=args.debug
+        ), debug=args.debug)
+    
+    except KeyboardInterrupt:
+        pass

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Optional, Dict, Tuple
 from aioquic.buffer import Buffer
 from .base import MOQTMessage, BUF_SIZE
 from ..types import *
@@ -20,6 +20,7 @@ class Fetch(MOQTMessage):
     end_group: int
     end_object: int
     parameters: Dict[int, bytes]
+    response: Optional['FetchOk']
 
     def __post_init__(self):
         self.type = MOQTMessageType.FETCH
