@@ -40,22 +40,22 @@ class Announce(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'Announce':
+    def deserialize(cls, buf: Buffer) -> 'Announce':
         # Deserialize namespace tuple
-        tuple_len = buffer.pull_uint_var()
+        tuple_len = buf.pull_uint_var()
         namespace = []
         for _ in range(tuple_len):
-            part_len = buffer.pull_uint_var()
-            namespace.append(buffer.pull_bytes(part_len))
+            part_len = buf.pull_uint_var()
+            namespace.append(buf.pull_bytes(part_len))
         namespace = tuple(namespace)  # Convert to tuple
         
         # Deserialize parameters
         params = {}
-        param_count = buffer.pull_uint_var()
+        param_count = buf.pull_uint_var()
         for _ in range(param_count):
-            param_id = buffer.pull_uint_var()
-            param_len = buffer.pull_uint_var()
-            param_value = buffer.pull_bytes(param_len)
+            param_id = buf.pull_uint_var()
+            param_len = buf.pull_uint_var()
+            param_value = buf.pull_bytes(param_len)
             params[param_id] = param_value
             
         return cls(namespace=namespace, parameters=params)
@@ -83,12 +83,12 @@ class AnnounceOk(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'AnnounceOk':
-        tuple_len = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'AnnounceOk':
+        tuple_len = buf.pull_uint_var()
         namespace = []
         for _ in range(tuple_len):
-            part_len = buffer.pull_uint_var()
-            namespace.append(buffer.pull_bytes(part_len))
+            part_len = buf.pull_uint_var()
+            namespace.append(buf.pull_bytes(part_len))
         return cls(namespace=tuple(namespace))
 
 @dataclass
@@ -122,16 +122,16 @@ class AnnounceError(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'AnnounceError':
-        tuple_len = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'AnnounceError':
+        tuple_len = buf.pull_uint_var()
         namespace = []
         for _ in range(tuple_len):
-            part_len = buffer.pull_uint_var()
-            namespace.append(buffer.pull_bytes(part_len))
+            part_len = buf.pull_uint_var()
+            namespace.append(buf.pull_bytes(part_len))
         
-        error_code = buffer.pull_uint_var()
-        reason_len = buffer.pull_uint_var()
-        reason = buffer.pull_bytes(reason_len).decode()
+        error_code = buf.pull_uint_var()
+        reason_len = buf.pull_uint_var()
+        reason = buf.pull_bytes(reason_len).decode()
         return cls(namespace=tuple(namespace), error_code=error_code, reason=reason)
 
 @dataclass
@@ -157,12 +157,12 @@ class Unannounce(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'Unannounce':
-        tuple_len = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'Unannounce':
+        tuple_len = buf.pull_uint_var()
         namespace = []
         for _ in range(tuple_len):
-            part_len = buffer.pull_uint_var()
-            namespace.append(buffer.pull_bytes(part_len))
+            part_len = buf.pull_uint_var()
+            namespace.append(buf.pull_bytes(part_len))
         return cls(namespace=tuple(namespace))
 
 @dataclass
@@ -196,16 +196,16 @@ class AnnounceCancel(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'AnnounceCancel':
-        tuple_len = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'AnnounceCancel':
+        tuple_len = buf.pull_uint_var()
         namespace = []
         for _ in range(tuple_len):
-            part_len = buffer.pull_uint_var()
-            namespace.append(buffer.pull_bytes(part_len))
+            part_len = buf.pull_uint_var()
+            namespace.append(buf.pull_bytes(part_len))
         
-        error_code = buffer.pull_uint_var()
-        reason_len = buffer.pull_uint_var()
-        reason = buffer.pull_bytes(reason_len).decode()
+        error_code = buf.pull_uint_var()
+        reason_len = buf.pull_uint_var()
+        reason = buf.pull_bytes(reason_len).decode()
         return cls(namespace=tuple(namespace), error_code=error_code, reason=reason)
 
 @dataclass
@@ -238,19 +238,19 @@ class SubscribeAnnounces(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'SubscribeAnnounces':
-        tuple_len = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'SubscribeAnnounces':
+        tuple_len = buf.pull_uint_var()
         namespace_prefix = []
         for _ in range(tuple_len):
-            part_len = buffer.pull_uint_var()
-            namespace_prefix.append(buffer.pull_bytes(part_len))
+            part_len = buf.pull_uint_var()
+            namespace_prefix.append(buf.pull_bytes(part_len))
 
         params = {}
-        param_count = buffer.pull_uint_var()
+        param_count = buf.pull_uint_var()
         for _ in range(param_count):
-            param_id = buffer.pull_uint_var()
-            param_len = buffer.pull_uint_var()
-            param_value = buffer.pull_bytes(param_len)
+            param_id = buf.pull_uint_var()
+            param_len = buf.pull_uint_var()
+            param_value = buf.pull_bytes(param_len)
             params[param_id] = param_value
 
         return cls(namespace_prefix=tuple(namespace_prefix), parameters=params)
@@ -278,12 +278,12 @@ class SubscribeAnnouncesOk(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'SubscribeAnnouncesOk':
-        tuple_len = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'SubscribeAnnouncesOk':
+        tuple_len = buf.pull_uint_var()
         namespace_prefix = []
         for _ in range(tuple_len):
-            part_len = buffer.pull_uint_var()
-            namespace_prefix.append(buffer.pull_bytes(part_len))
+            part_len = buf.pull_uint_var()
+            namespace_prefix.append(buf.pull_bytes(part_len))
         return cls(namespace_prefix=tuple(namespace_prefix))
 
 @dataclass
@@ -317,16 +317,16 @@ class SubscribeAnnouncesError(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'SubscribeAnnouncesError':
-        tuple_len = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'SubscribeAnnouncesError':
+        tuple_len = buf.pull_uint_var()
         namespace_prefix = []
         for _ in range(tuple_len):
-            part_len = buffer.pull_uint_var()
-            namespace_prefix.append(buffer.pull_bytes(part_len))
+            part_len = buf.pull_uint_var()
+            namespace_prefix.append(buf.pull_bytes(part_len))
         
-        error_code = buffer.pull_uint_var()
-        reason_len = buffer.pull_uint_var()
-        reason = buffer.pull_bytes(reason_len).decode()
+        error_code = buf.pull_uint_var()
+        reason_len = buf.pull_uint_var()
+        reason = buf.pull_bytes(reason_len).decode()
         return cls(namespace_prefix=tuple(namespace_prefix), error_code=error_code, reason=reason)
 
 @dataclass 
@@ -352,10 +352,10 @@ class UnsubscribeAnnounces(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'UnsubscribeAnnounces':
-        tuple_len = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'UnsubscribeAnnounces':
+        tuple_len = buf.pull_uint_var()
         namespace_prefix = []
         for _ in range(tuple_len):
-            part_len = buffer.pull_uint_var()
-            namespace_prefix.append(buffer.pull_bytes(part_len))
+            part_len = buf.pull_uint_var()
+            namespace_prefix.append(buf.pull_bytes(part_len))
         return cls(namespace_prefix=tuple(namespace_prefix))

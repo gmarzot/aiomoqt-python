@@ -38,8 +38,8 @@ class MOQTMessage:
         raise NotImplementedError()
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'MOQTMessage':
-        """Create message from buffer containing payload."""
+    def deserialize(cls, buf: Buffer) -> 'MOQTMessage':
+        """Create message from buf containing payload."""
         raise NotImplementedError()
 
     def __str__(self) -> str:

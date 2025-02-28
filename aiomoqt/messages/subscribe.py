@@ -197,44 +197,44 @@ class Subscribe(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'Subscribe':
-        subscribe_id = buffer.pull_uint_var()
-        track_alias = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'Subscribe':
+        subscribe_id = buf.pull_uint_var()
+        track_alias = buf.pull_uint_var()
 
         # Deserialize namespace tuple
-        tuple_len = buffer.pull_uint_var()
+        tuple_len = buf.pull_uint_var()
         namespace = []
         for _ in range(tuple_len):
-            part_len = buffer.pull_uint_var()
-            namespace.append(buffer.pull_bytes(part_len))
+            part_len = buf.pull_uint_var()
+            namespace.append(buf.pull_bytes(part_len))
         namespace = tuple(namespace)
 
         # Track name
-        track_name_len = buffer.pull_uint_var()
-        track_name = buffer.pull_bytes(track_name_len)
+        track_name_len = buf.pull_uint_var()
+        track_name = buf.pull_bytes(track_name_len)
 
-        priority = buffer.pull_uint8()
-        direction = buffer.pull_uint8()
-        filter_type = buffer.pull_uint_var()
+        priority = buf.pull_uint8()
+        direction = buf.pull_uint8()
+        filter_type = buf.pull_uint_var()
 
         # Handle optional fields based on filter type
         start_group = None
         start_object = None
         end_group = None
         if filter_type in (3, 4):  # ABSOLUTE_START or ABSOLUTE_RANGE
-            start_group = buffer.pull_uint_var()
-            start_object = buffer.pull_uint_var()
+            start_group = buf.pull_uint_var()
+            start_object = buf.pull_uint_var()
 
         if filter_type == 4:  # ABSOLUTE_RANGE
-            end_group = buffer.pull_uint_var()
+            end_group = buf.pull_uint_var()
 
         # Deserialize parameters
         params = {}
-        param_count = buffer.pull_uint_var()
+        param_count = buf.pull_uint_var()
         for _ in range(param_count):
-            param_id = buffer.pull_uint_var()
-            param_len = buffer.pull_uint_var()
-            param_value = buffer.pull_bytes(param_len)
+            param_id = buf.pull_uint_var()
+            param_len = buf.pull_uint_var()
+            param_value = buf.pull_bytes(param_len)
             params[param_id] = param_value
 
         return cls(
@@ -271,8 +271,8 @@ class Unsubscribe(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'Unsubscribe':
-        subscribe_id = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'Unsubscribe':
+        subscribe_id = buf.pull_uint_var()
         return cls(subscribe_id=subscribe_id)
 
 
@@ -314,15 +314,15 @@ class SubscribeDone(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'SubscribeDone':
-        subscribe_id = buffer.pull_uint_var()
-        status_code = buffer.pull_uint_var()
-        stream_count = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'SubscribeDone':
+        subscribe_id = buf.pull_uint_var()
+        status_code = buf.pull_uint_var()
+        stream_count = buf.pull_uint_var()
         try:
-            reason_len = buffer.pull_uint_var()
-            if reason_len > buffer.capacity - buffer.tell():
+            reason_len = buf.pull_uint_var()
+            if reason_len > buf.capacity - buf.tell():
                 raise ValueError(f"Invalid reason length {reason_len}")
-            reason = buffer.pull_bytes(reason_len).decode()
+            reason = buf.pull_bytes(reason_len).decode()
         except Exception as e:
             logger.error(f"Error parsing SUBSCRIBE_DONE reason: {e}")
             reason = f"parsing error: len: {reason_len}" 
@@ -355,8 +355,8 @@ class MaxSubscribeId(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'MaxSubscribeId':
-        subscribe_id = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'MaxSubscribeId':
+        subscribe_id = buf.pull_uint_var()
         return cls(subscribe_id=subscribe_id)
 
 
@@ -380,8 +380,8 @@ class SubscribesBlocked(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'SubscribesBlocked':
-        maximum_subscribe_id = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'SubscribesBlocked':
+        maximum_subscribe_id = buf.pull_uint_var()
         return cls(maximum_subscribe_id=maximum_subscribe_id)
 
 
@@ -434,24 +434,24 @@ class SubscribeOk(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'SubscribeOk':
-        subscribe_id = buffer.pull_uint_var()
-        expires = buffer.pull_uint_var()
-        group_order = GroupOrder(buffer.pull_uint8())
-        content_exists = buffer.pull_uint8()
+    def deserialize(cls, buf: Buffer) -> 'SubscribeOk':
+        subscribe_id = buf.pull_uint_var()
+        expires = buf.pull_uint_var()
+        group_order = GroupOrder(buf.pull_uint8())
+        content_exists = buf.pull_uint8()
 
         largest_group_id = None
         largest_object_id = None
         if content_exists == ContentExistsCode.EXISTS:
-            largest_group_id = buffer.pull_uint_var()
-            largest_object_id = buffer.pull_uint_var()
+            largest_group_id = buf.pull_uint_var()
+            largest_object_id = buf.pull_uint_var()
 
         parameters = {}
-        param_count = buffer.pull_uint_var()
+        param_count = buf.pull_uint_var()
         for _ in range(param_count):
-            param_id = buffer.pull_uint_var()
-            param_len = buffer.pull_uint_var()
-            param_value = buffer.pull_bytes(param_len)
+            param_id = buf.pull_uint_var()
+            param_len = buf.pull_uint_var()
+            param_value = buf.pull_bytes(param_len)
             parameters[ParamType(param_id)] = param_value
 
         return cls(
@@ -502,12 +502,12 @@ class SubscribeError(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'SubscribeError':
-        subscribe_id = buffer.pull_uint_var()
-        error_code = buffer.pull_uint_var()
-        reason_len = buffer.pull_uint_var()
-        reason = buffer.pull_bytes(reason_len).decode()
-        track_alias = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'SubscribeError':
+        subscribe_id = buf.pull_uint_var()
+        error_code = buf.pull_uint_var()
+        reason_len = buf.pull_uint_var()
+        reason = buf.pull_bytes(reason_len).decode()
+        track_alias = buf.pull_uint_var()
 
         return cls(
             subscribe_id=subscribe_id,
@@ -562,19 +562,19 @@ class SubscribeUpdate(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'SubscribeUpdate':
-        subscribe_id = buffer.pull_uint_var()
-        start_group = buffer.pull_uint_var()
-        start_object = buffer.pull_uint_var()
-        end_group = buffer.pull_uint_var()
-        priority = buffer.pull_uint8()
+    def deserialize(cls, buf: Buffer) -> 'SubscribeUpdate':
+        subscribe_id = buf.pull_uint_var()
+        start_group = buf.pull_uint_var()
+        start_object = buf.pull_uint_var()
+        end_group = buf.pull_uint_var()
+        priority = buf.pull_uint8()
 
-        param_count = buffer.pull_uint_var()
+        param_count = buf.pull_uint_var()
         parameters = {}
         for _ in range(param_count):
-            param_id = buffer.pull_uint_var()
-            param_len = buffer.pull_uint_var()
-            param_value = buffer.pull_bytes(param_len)
+            param_id = buf.pull_uint_var()
+            param_len = buf.pull_uint_var()
+            param_value = buf.pull_bytes(param_len)
             parameters[param_id] = param_value
 
         return cls(

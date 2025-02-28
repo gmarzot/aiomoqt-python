@@ -25,6 +25,7 @@ class MOQTClientSession(MOQTSession):  # New connection manager class
         self.endpoint = endpoint
         if configuration is None:
             configuration = QuicConfiguration(
+                
                 alpn_protocols=H3_ALPN,
                 is_client=True,
                 verify_mode=ssl.CERT_NONE,

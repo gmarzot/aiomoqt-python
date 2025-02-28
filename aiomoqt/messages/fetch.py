@@ -61,34 +61,34 @@ class Fetch(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'Fetch':
-        subscribe_id = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'Fetch':
+        subscribe_id = buf.pull_uint_var()
 
         # Namespace tuple
-        tuple_len = buffer.pull_uint_var()
+        tuple_len = buf.pull_uint_var()
         namespace = []
         for _ in range(tuple_len):
-            part_len = buffer.pull_uint_var()
-            namespace.append(buffer.pull_bytes(part_len))
+            part_len = buf.pull_uint_var()
+            namespace.append(buf.pull_bytes(part_len))
 
         # Track name
-        track_name_len = buffer.pull_uint_var()
-        track_name = buffer.pull_bytes(track_name_len)
+        track_name_len = buf.pull_uint_var()
+        track_name = buf.pull_bytes(track_name_len)
 
-        subscriber_priority = buffer.pull_uint8()
-        group_order = buffer.pull_uint8()
-        start_group = buffer.pull_uint_var()
-        start_object = buffer.pull_uint_var()
-        end_group = buffer.pull_uint_var()
-        end_object = buffer.pull_uint_var()
+        subscriber_priority = buf.pull_uint8()
+        group_order = buf.pull_uint8()
+        start_group = buf.pull_uint_var()
+        start_object = buf.pull_uint_var()
+        end_group = buf.pull_uint_var()
+        end_object = buf.pull_uint_var()
 
         # Parameters
         params = {}
-        param_count = buffer.pull_uint_var()
+        param_count = buf.pull_uint_var()
         for _ in range(param_count):
-            param_id = buffer.pull_uint_var()
-            param_len = buffer.pull_uint_var()
-            param_value = buffer.pull_bytes(param_len)
+            param_id = buf.pull_uint_var()
+            param_len = buf.pull_uint_var()
+            param_value = buf.pull_bytes(param_len)
             params[param_id] = param_value
 
         return cls(
@@ -124,8 +124,8 @@ class FetchCancel(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'FetchCancel':
-        subscribe_id = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'FetchCancel':
+        subscribe_id = buf.pull_uint_var()
         return cls(subscribe_id=subscribe_id)
 
 @dataclass
@@ -164,19 +164,19 @@ class FetchOk(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'FetchOk':
-        subscribe_id = buffer.pull_uint_var()
-        group_order = buffer.pull_uint8()
-        end_of_track = buffer.pull_uint8()
-        largest_group_id = buffer.pull_uint_var()
-        largest_object_id = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'FetchOk':
+        subscribe_id = buf.pull_uint_var()
+        group_order = buf.pull_uint8()
+        end_of_track = buf.pull_uint8()
+        largest_group_id = buf.pull_uint_var()
+        largest_object_id = buf.pull_uint_var()
 
         params = {}
-        param_count = buffer.pull_uint_var()
+        param_count = buf.pull_uint_var()
         for _ in range(param_count):
-            param_id = buffer.pull_uint_var()
-            param_len = buffer.pull_uint_var()
-            param_value = buffer.pull_bytes(param_len)
+            param_id = buf.pull_uint_var()
+            param_len = buf.pull_uint_var()
+            param_value = buf.pull_bytes(param_len)
             params[param_id] = param_value
 
         return cls(
@@ -215,11 +215,11 @@ class FetchError(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'FetchError':
-        subscribe_id = buffer.pull_uint_var()
-        error_code = buffer.pull_uint_var()
-        reason_len = buffer.pull_uint_var()
-        reason = buffer.pull_bytes(reason_len).decode()
+    def deserialize(cls, buf: Buffer) -> 'FetchError':
+        subscribe_id = buf.pull_uint_var()
+        error_code = buf.pull_uint_var()
+        reason_len = buf.pull_uint_var()
+        reason = buf.pull_bytes(reason_len).decode()
         
         return cls(
             subscribe_id=subscribe_id,

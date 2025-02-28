@@ -68,6 +68,9 @@ class SubgroupHeader:
     group_id: int
     subgroup_id: int
     publisher_priority: int
+    
+    def __post_init__(self):
+        self.type = DataStreamType.SUBGROUP_HEADER
 
     def serialize(self) -> Buffer:
         buf = Buffer(capacity=BUF_SIZE)
@@ -80,12 +83,12 @@ class SubgroupHeader:
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'SubgroupHeader':
+    def deserialize(cls, buf: Buffer) -> 'SubgroupHeader':
         """MOQT subgroup stream header."""
-        track_alias = buffer.pull_uint_var()
-        group_id = buffer.pull_uint_var()
-        subgroup_id = buffer.pull_uint_var()
-        publisher_priority = buffer.pull_uint8()
+        track_alias = buf.pull_uint_var()
+        group_id = buf.pull_uint_var()
+        subgroup_id = buf.pull_uint_var()
+        publisher_priority = buf.pull_uint8()
 
         return cls(
             track_alias=track_alias,
@@ -129,31 +132,31 @@ class ObjectHeader:
         return buf
     
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'ObjectHeader':
+    def deserialize(cls, buf: Buffer) -> 'ObjectHeader':
         """Deserialize from stream transmission."""
-        object_id = buffer.pull_uint_var()
+        object_id = buf.pull_uint_var()
         # Parse extensions
         extensions = {}
-        ext_count = buffer.pull_uint_var()
+        ext_count = buf.pull_uint_var()
         for _ in range(ext_count):
-            ext_id = buffer.pull_uint_var()
+            ext_id = buf.pull_uint_var()
             if ext_id % 2 == 0:  # even extension types are simple var int
-                ext_value = buffer.pull_uint_var()
+                ext_value = buf.pull_uint_var()
                 extensions[ext_id] = ext_value
             else:
-                ext_value_len = buffer.pull_uint_var()
-                ext_value = buffer.pull_bytes(ext_value_len)
+                ext_value_len = buf.pull_uint_var()
+                ext_value = buf.pull_bytes(ext_value_len)
                 extensions[ext_id] = ext_value
         # Get payload or status
-        payload_len = buffer.pull_uint_var()
+        payload_len = buf.pull_uint_var()
         if payload_len == 0:
             # Zero length means status code follows
-            status = ObjectStatus(buffer.pull_uint_var())
+            status = ObjectStatus(buf.pull_uint_var())
             payload = b''
         else:
             status = ObjectStatus.NORMAL
-            assert payload_len <= (buffer.capacity - buffer.tell())
-            payload = buffer.pull_bytes(payload_len)
+            assert payload_len <= (buf.capacity - buf.tell())
+            payload = buf.pull_bytes(payload_len)
         
         return cls(
             object_id=object_id,
@@ -179,14 +182,14 @@ class ObjectHeader:
         return buf
 
     @classmethod
-    def deserialize_datagram(cls, buffer: Buffer) -> 'ObjectHeader':
+    def deserialize_datagram(cls, buf: Buffer) -> 'ObjectHeader':
         """Deserialize a datagram object."""
-        track_alias = buffer.pull_uint_var()
-        group_id = buffer.pull_uint_var()
-        object_id = buffer.pull_uint_var()
-        publisher_priority = buffer.pull_uint8()
+        track_alias = buf.pull_uint_var()
+        group_id = buf.pull_uint_var()
+        object_id = buf.pull_uint_var()
+        publisher_priority = buf.pull_uint8()
         
-        remaining = buffer.pull_bytes(buffer.capacity - buffer.tell())
+        remaining = buf.pull_bytes(buf.capacity - buf.tell())
         if not remaining:
             status = ObjectStatus.NORMAL
             payload = b''
@@ -209,25 +212,25 @@ class ObjectHeader:
         )
 
     @classmethod
-    def deserialize_track(cls, buffer: Buffer, forwarding_preference: ForwardingPreference, 
+    def deserialize_track(cls, buf: Buffer, forwarding_preference: ForwardingPreference, 
                          subgroup_id: Optional[int] = None) -> 'ObjectHeader':
         """Deserialize an object with track forwarding."""
-        track_alias = buffer.pull_uint_var()
-        group_id = buffer.pull_uint_var()
-        object_id = buffer.pull_uint_var()
-        publisher_priority = buffer.pull_uint8()
-        payload_len = buffer.pull_uint_var()
+        track_alias = buf.pull_uint_var()
+        group_id = buf.pull_uint_var()
+        object_id = buf.pull_uint_var()
+        publisher_priority = buf.pull_uint8()
+        payload_len = buf.pull_uint_var()
 
         if payload_len == 0:
             try:
-                status = ObjectStatus(buffer.pull_uint_var())
+                status = ObjectStatus(buf.pull_uint_var())
                 payload = b''
             except ValueError as e:
                 logger.error(f"Invalid object status: {e}")
                 raise
         else:
             status = ObjectStatus.NORMAL
-            payload = buffer.pull_bytes(payload_len)
+            payload = buf.pull_bytes(payload_len)
 
         return cls(
             track_alias=track_alias,
@@ -256,12 +259,12 @@ class FetchHeader:
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'FetchHeader':
-        # stream_type = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'FetchHeader':
+        # stream_type = buf.pull_uint_var()
         # if stream_type != DataStreamType.FETCH_HEADER:
         #     raise ValueError(f"Invalid stream type: {stream_type}")
 
-        subscribe_id = buffer.pull_uint_var()
+        subscribe_id = buf.pull_uint_var()
         return cls(subscribe_id=subscribe_id)
 
 @dataclass
@@ -293,23 +296,23 @@ class FetchObject:
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'FetchObject':
-        group_id = buffer.pull_uint_var()
-        subgroup_id = buffer.pull_uint_var()
-        object_id = buffer.pull_uint_var()
-        publisher_priority = buffer.pull_uint8()
-        payload_len = buffer.pull_uint_var()
+    def deserialize(cls, buf: Buffer) -> 'FetchObject':
+        group_id = buf.pull_uint_var()
+        subgroup_id = buf.pull_uint_var()
+        object_id = buf.pull_uint_var()
+        publisher_priority = buf.pull_uint8()
+        payload_len = buf.pull_uint_var()
 
         if payload_len == 0:
             try:
-                status = ObjectStatus(buffer.pull_uint_var())
+                status = ObjectStatus(buf.pull_uint_var())
                 payload = b''
             except ValueError as e:
                 logger.error(f"Invalid object status: {e}")
                 raise
         else:
             status = ObjectStatus.NORMAL
-            payload = buffer.pull_bytes(payload_len)
+            payload = buf.pull_bytes(payload_len)
 
         return cls(
             group_id=group_id,
@@ -328,35 +331,60 @@ class ObjectDatagram(MOQTMessage):
     group_id: int
     object_id: int
     publisher_priority: int
+    extensions: Optional[Dict[int, bytes]] = None
     payload: bytes = b''
 
     def __post_init__(self):
         self.type = DatagramType.OBJECT_DATAGRAM
 
-    def serialize(self) -> bytes:
+    def serialize(self) -> Buffer:
         buf = Buffer(capacity=32 + len(self.payload))
-
+        buf.push_uint_var(DatagramType.OBJECT_DATAGRAM)   
         buf.push_uint_var(self.track_alias)
         buf.push_uint_var(self.group_id)
         buf.push_uint_var(self.object_id)
         buf.push_uint8(self.publisher_priority)
+        extensions = self.extensions or {}
+        ext_len = len(extensions)
+        buf.push_uint_var(ext_len)
+        for ext_id, ext_value in extensions.items():
+            if ext_id % 2 == 0:  # even extension types are simple var int
+                buf.push_uint_var(ext_value)
+            else:
+                buf.push_uint_var(len(ext_value))
+                buf.push_bytes(ext_value)
+                
         buf.push_bytes(self.payload)
-
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'ObjectDatagram':
-        track_alias = buffer.pull_uint_var()
-        group_id = buffer.pull_uint_var()
-        object_id = buffer.pull_uint_var()
-        publisher_priority = buffer.pull_uint8()
-        payload = buffer.pull_bytes(buffer.capacity - buffer.tell())
+    def deserialize(cls, buf: Buffer) -> 'ObjectDatagram':
+        track_alias = buf.pull_uint_var()
+        group_id = buf.pull_uint_var()
+        object_id = buf.pull_uint_var()
+        publisher_priority = buf.pull_uint8()
+        
+        extensions = {}
+        ext_count = buf.pull_uint_var()
+        for _ in range(ext_count):
+            ext_id = buf.pull_uint_var()
+            if ext_id % 2 == 0:  # even extension types are simple var int
+                ext_value = buf.pull_uint_var()
+                extensions[ext_id] = ext_value
+            else:
+                ext_value_len = buf.pull_uint_var()
+                ext_value = buf.pull_bytes(ext_value_len)
+                extensions[ext_id] = ext_value
+                
+        # Get payload - the rest of the datagram - no length needed
+        payload = buf.pull_bytes(buf.capacity - buf.tell())
 
         return cls(
             track_alias=track_alias,
             group_id=group_id,
             object_id=object_id,
             publisher_priority=publisher_priority,
+            extensions=extensions,
             payload=payload
         )
 
@@ -367,30 +395,51 @@ class ObjectDatagramStatus(MOQTMessage):
     group_id: int
     object_id: int
     publisher_priority: int
-    status: ObjectStatus
+    extensions: Optional[Dict[int, bytes]] = None
+    status: ObjectStatus = ObjectStatus.NORMAL
 
     def __post_init__(self):
         self.type = DatagramType.OBJECT_DATAGRAM_STATUS
 
-    def serialize(self) -> bytes:
-        buf = Buffer(capacity=32)
-
+    def serialize(self) -> Buffer:
+        buf = Buffer(capacity=32 + len(self.payload))
+        buf.push_uint_var(DatagramType.OBJECT_DATAGRAM_STATUS)   
         buf.push_uint_var(self.track_alias)
         buf.push_uint_var(self.group_id)
         buf.push_uint_var(self.object_id)
         buf.push_uint8(self.publisher_priority)
-        buf.push_uint_var(self.status)
+        extensions = self.extensions or {}
+        ext_len = len(extensions)
+        buf.push_uint_var(ext_len)
+        for ext_id, ext_value in extensions.items():
+            if ext_id % 2 == 0:  # even extension types are simple var int
+                buf.push_uint_var(ext_value)
+            else:
+                buf.push_uint_var(len(ext_value))
+                buf.push_bytes(ext_value)
+        
+        buf.push_uint_var(self.status)  # Status code
 
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'ObjectDatagramStatus':
-        track_alias = buffer.pull_uint_var()
-        group_id = buffer.pull_uint_var()
-        object_id = buffer.pull_uint_var()
-        publisher_priority = buffer.pull_uint8()
-        status = ObjectStatus(buffer.pull_uint_var())
-
+    def deserialize(cls, buf: Buffer) -> 'ObjectDatagramStatus':
+        track_alias = buf.pull_uint_var()
+        group_id = buf.pull_uint_var()
+        object_id = buf.pull_uint_var()
+        publisher_priority = buf.pull_uint8()
+        extensions = {}
+        ext_count = buf.pull_uint_var()
+        for _ in range(ext_count):
+            ext_id = buf.pull_uint_var()
+            if ext_id % 2 == 0:  # even extension types are simple var int
+                ext_value = buf.pull_uint_var()
+                extensions[ext_id] = ext_value
+            else:
+                ext_value_len = buf.pull_uint_var()
+                ext_value = buf.pull_bytes(ext_value_len)
+                extensions[ext_id] = ext_value     
+        status = ObjectStatus(buf.pull_uint_var())
         return cls(
             track_alias=track_alias,
             group_id=group_id,

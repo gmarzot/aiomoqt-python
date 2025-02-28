@@ -85,23 +85,23 @@ class ClientSetup(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> None:
+    def deserialize(cls, buf: Buffer) -> None:
         """Handle CLIENT_SETUP message."""
-        logger.info(f"CLIENT_SETUP: {buffer.data.hex()} ")
+        logger.info(f"CLIENT_SETUP: {buf.data.hex()} ")
         versions = []
-        version_count = buffer.pull_uint_var()
+        version_count = buf.pull_uint_var()
         for _ in range(version_count):
-            versions.append(buffer.pull_uint_var())
+            versions.append(buf.pull_uint_var())
 
-        param_count = buffer.pull_uint_var()
+        param_count = buf.pull_uint_var()
 
         logger.info(
             f"CLIENT_SETUP: version: {versions} params: {param_count} ")
         params = {}
         for _ in range(param_count):
-            param_id = buffer.pull_uint_var()
-            param_len = buffer.pull_uint_var()
-            param_value = buffer.pull_bytes(param_len)
+            param_id = buf.pull_uint_var()
+            param_len = buf.pull_uint_var()
+            param_value = buf.pull_bytes(param_len)
             if (param_id == SetupParamType.MAX_SUBSCRIBER_ID):
                 id = "MAX_SUBSCRIBER_ID"
                 param_value = Buffer(data=param_value).pull_uint_var()
@@ -143,7 +143,7 @@ class GoAway(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'GoAway':
-        uri_len = buffer.pull_uint_var()
-        uri = buffer.pull_bytes(uri_len).decode()
+    def deserialize(cls, buf: Buffer) -> 'GoAway':
+        uri_len = buf.pull_uint_var()
+        uri = buf.pull_bytes(uri_len).decode()
         return cls(new_session_uri=uri)
