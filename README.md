@@ -4,12 +4,13 @@
 
 ## Overview
 
-This package aims to faithfully implement the [MoQT Specification](https://moq-wg.github.io/moq-transport/draft-ietf-moq-transport.html) (currently **draft-08**). It is desinged and intended to satisfy a variety of use-cases to operate as a test tool, faciliate education, and adoption of the protocol. It is also designed to support a variety of production use cases (TBD). 
+This package implements the [MoQT Specification](https://moq-wg.github.io/moq-transport/draft-ietf-moq-transport.html) (currently **draft-08**). It is desinged for general use as an MoQT client and server library. The architecture is
+based on [asyncio](https://pypi.org/project/asyncio/), and extends the [aioquic](https://pypi.org/project/aioquic/) protocol. Currently most MoQT control messages are parsed and serialized. 
 
 ### Featurtes
 
-- A session protocol class maintaining an MoQT message registry for control message types.
 - Serialization and deserialization of messages and data streams.
+- A session protocol class with MoQT message registry.
 - An extensible API allowing custom handlers for responses and incoming messages.
 - Support for both asynchronous and synchronous calls using the `wait_response` flag.
 
@@ -37,17 +38,25 @@ uv pip install aiomoqt
 import asyncio
 from aiomoqt.client import MOQTClientSession
 
-async def main():
-    client = MOQTClientSession(host='localhost', port=4433)
+    client = MOQTClientSession(host=127.0.0.1, port=443, endpoint='wt-endpoint')
+
     async with client.connect() as session:
-        response = await session.initialize()
-        response = await session.subscribe('namespace', 'track_name', wait_response=True)
-        await session._moqt_session_close
+        try:
+            await session.client_session_init():
+            response = await session.subscribe(
+                'namespace', 
+                'track_name',
+                wait_response=True
+            )
+            # wait for session close, process data and control messages
+            await session.async_closed()
+        except MOQTException as e:
+            session.close(e.error_code, e.reason_phrase)
 
 asyncio.run(main())
 ```
 
-#### see aiomoqt-python/aiomoqt/examples for more additional examples
+#### see aiomoqt-python/aiomoqt/examples for additional examples
 
 ## Development
 
@@ -58,8 +67,23 @@ git clone https://github.com/gmarzot/aiomoqt-python.git
 cd aiomoqt-python
 ./bootstrap_python.sh
 source .venv/bin/activate
+```
+## Installation
+
+```bash
 uv pip install .
 ```
+
+## TODO
+
+* Datagram Object Data
+* FETCH/OK, Joining FETCH/OK, 
+* Direct QUIC connection
+* GOAWAY, SUBSCRIBE_UPDATE, ANNOUNCE (beyond the basic), etc.
+* Move track data read/write API to aiomoqt.messages.track
+* Support file I/O [MOQT File Format](https://datatracker.ietf.org/doc/html/draft-jennings-moq-file-00)
+* Real tests
+
 ## Contributing
 
 Contributions are welcome! If you'd like to contribute, please:

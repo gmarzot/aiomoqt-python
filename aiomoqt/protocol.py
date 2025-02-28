@@ -181,7 +181,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         """Call the standard message handler"""
         _, handler = self.MOQT_CONTROL_MESSAGE_REGISTRY[type]
         # Schedule handler if one exists
-        logger.info(f"calling standard handler: {handler}")
+        logger.info(f"MOQT event: calling default handler: {handler.__qualname__}")
         if handler is not None:
             task = asyncio.create_task(handler(self, msg))
             task.add_done_callback(lambda t: self._tasks.discard(t))

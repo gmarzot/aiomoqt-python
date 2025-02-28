@@ -43,7 +43,9 @@ async def subscribe_data_generator(session: MOQTSessionProtocol, msg: Subscribe)
     session._tasks.add(task)
     tasks.append(task)
 
-    await asyncio.sleep(150)
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+    # await asyncio.sleep(150)
     session._close_session()
 
 # Create fixed padding buffers once
@@ -74,13 +76,17 @@ async def generate_subgroup_stream(session: MOQTSessionProtocol, subgroup_id: in
             if (object_id % GROUP_SIZE) == 0:
                 group_id += 1
                 if group_id > 0:
-                    object_id += 1
                     status = ObjectStatus.END_OF_GROUP
                     header = ObjectHeader(
                         object_id=object_id,
-                        status=status
+                        status=status,
+                        # extensions={
+                        #     0: 4207849484,
+                        #     1: 'faceb00c'.encode()
+                        # }
                     )
                     msg = header.serialize()
+                    logger.debug(f"MOQT app: sending object status with extensions: {msg.data_slice(0,msg.capacity)}")
                     if session._close_err is not None:
                         raise asyncio.CancelledError
                     logger.debug(f"MOQT app: sending: ObjectHeader: id:{group_id-1}.{subgroup_id}.{object_id} status: END_OF_GROUP")
@@ -116,9 +122,15 @@ async def generate_subgroup_stream(session: MOQTSessionProtocol, subgroup_id: in
                 info = f"{ts}.{tu} |P| {group_id}.{subgroup_id}.{object_id} |".encode()
                 payload = info + P_FRAME_PAD    
    
-            obj = ObjectHeader(object_id=object_id, payload=payload)
+            obj = ObjectHeader(object_id=object_id,
+                        payload=payload,
+                        # extensions={
+                        #     0: 4207849484,
+                        #     1: 'faceb00c'.encode()
+                        # }
+                    )
             msg = obj.serialize()
-            logger.debug(f"MOQT app: sending: ObjectHeader: id:{group_id-1}.{subgroup_id}.{object_id} size: {msg.capacity} bytes")
+            logger.debug(f"MOQT app: sending: ObjectHeader: id: {group_id}.{subgroup_id}.{object_id} size: {msg.capacity} bytes")
             if session._close_err is not None:
                 raise asyncio.CancelledError
             session._quic.send_stream_data(stream_id, msg.data, end_stream=False)
@@ -160,7 +172,7 @@ async def main(host: str, port: int, endpoint: str, namespace: str, trackname: s
             
             # Complete the MoQT session setup
             await session.client_session_init()
-            
+            logger.debug(f"MOQT app: {session._quic._local_max_stream_data_bidi_remote}")
             logger.info(f"MOQT app: announce namespace: {namespace}")
             response = await session.announce(
                 namespace=namespace,

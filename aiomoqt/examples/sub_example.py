@@ -23,7 +23,7 @@ def parse_args():
     return parser.parse_args()
 
 
-async def main(host: str, port: int, endpoint: str, namespace: str, trackname: str, debug: bool):
+async def main(host: str, port: int, endpoint: str, namespace: str, track_name: str, debug: bool):
     log_level = logging.DEBUG if debug else logging.INFO
     set_log_level(log_level)
     logger = get_logger(__name__)
@@ -47,7 +47,7 @@ async def main(host: str, port: int, endpoint: str, namespace: str, trackname: s
             logger.info(f"MOQT app: SubscribeAnnounces response: {response}")
             response = await session.subscribe(
                 namespace=namespace,
-                track_name=trackname,
+                track_name=track_name,
                 parameters={
                     ParamType.MAX_CACHE_DURATION: 100,
                     ParamType.AUTHORIZATION_INFO: b"auth-token-123",
@@ -76,7 +76,7 @@ if __name__ == "__main__":
             port=args.port,
             endpoint=args.endpoint,
             namespace=args.namespace,
-            trackname=args.trackname,
+            track_name=args.trackname,
             debug=args.debug
         ), debug=args.debug)
     
