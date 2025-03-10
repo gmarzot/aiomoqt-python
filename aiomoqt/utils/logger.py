@@ -2,7 +2,7 @@ import logging
 import json
 import sys
 from logging import getLevelName
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 from aioquic.quic.logger import QuicLogger, QuicLoggerTrace, QLOG_VERSION
 
 # Cache to store created loggers
@@ -20,7 +20,6 @@ def set_log_level(level: any = None) -> any:
         logger.setLevel(level)
 
     return level
-
 
 def get_logger(name: str, level: Optional[int] = None) -> logging.Logger:
     """Get a logger with consistent formatting."""
@@ -53,7 +52,13 @@ def get_logger(name: str, level: Optional[int] = None) -> logging.Logger:
 
     return logger
 
-
+def class_name(obj: Any) -> str:
+    if isinstance(obj, type):
+        return obj.__name__
+    else:
+        return obj.__class__.__name__
+    
+    
 class QuicDebugLogger(QuicLogger):
     def __init__(self):
         super().__init__()

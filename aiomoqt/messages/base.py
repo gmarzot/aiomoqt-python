@@ -2,11 +2,17 @@ from typing import Any
 from dataclasses import dataclass, fields
 from aioquic.buffer import Buffer
 from ..types import *
-from ..utils.logger import get_logger
+from ..utils.logger import *
 
 logger = get_logger(__name__)
 
 BUF_SIZE = 64
+
+
+class MOQTUnderflow(Exception):
+    def __init__(self, pos: int, needed: int):
+        self.pos = pos
+        self.needed = needed
 
 
 @dataclass
@@ -57,7 +63,7 @@ class MOQTMessage:
             elif field.name == "parameters":
                 # Decode parameter types and values
                 items = []
-                enum = SetupParamType if self.__class__.__name__.endswith('Setup') else ParamType
+                enum = SetupParamType if class_name(self).endswith('Setup') else ParamType
                 for k, v in value.items():
                     param_name = enum(k).name  # Convert enum value to name
                     try:
@@ -75,8 +81,10 @@ class MOQTMessage:
                     str_val = f"0x{value.hex()}"
             elif isinstance(value, dict):
                 str_val = "{" + ", ".join(f"{k}: {v}" for k, v in value.items()) + "}"
+            elif field.name == 'payload':
+                str_val = f"0x{value.hex()}"
             else:
                 str_val = str(value)
             parts.append(f"{field.name}={str_val}")
 
-        return f"{self.__class__.__name__}({', '.join(parts)})"
+        return f"{class_name(self)}({', '.join(parts)})"

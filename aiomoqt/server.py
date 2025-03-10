@@ -8,7 +8,7 @@ from aioquic.asyncio.server import QuicServer, serve
 from aioquic.h3.connection import H3_ALPN
 
 from .protocol import MOQTSession, MOQTSessionProtocol
-from .utils.logger import get_logger, QuicDebugLogger
+from .utils.logger import *
 
 logger = get_logger(__name__)
 
@@ -51,7 +51,7 @@ class MOQTServerSession(MOQTSession):
         configuration.load_cert_chain(certificate, private_key)
         
         self.configuration = configuration
-        logger.debug(f"quic_logger: {configuration.quic_logger.__class__}")
+        logger.debug(f"quic_logger: {class_name(configuration.quic_logger)}")
 
     def serve(self) -> Coroutine[Any, Any, QuicServer]:
         """Start the MOQT server."""

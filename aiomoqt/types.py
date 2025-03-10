@@ -41,19 +41,19 @@ class ParamType(IntEnum):
 class SetupParamType(IntEnum):
     """Setup Parameter type constants"""
     CLIENT_ROLE = 0x0  # deprecated - removed in draft-8
-    ENDPOINT_PATH = 0x1  # only relevant to raw QUIC connection
-    MAX_SUBSCRIBER_ID = 0x2
+    ENDPOINT_PATH = 0x01  # only relevant to raw QUIC connection
+    MAX_SUBSCRIBER_ID = 0x02
 
 
 class SessionCloseCode(IntEnum):
     """Session close error codes."""
     NO_ERROR = 0x0
-    INTERNAL_ERROR = 0x1
-    UNAUTHORIZED = 0x2
-    PROTOCOL_VIOLATION = 0x3
-    DUPLICATE_TRACK_ALIAS = 0x4
-    PARAMETER_LENGTH_MISMATCH = 0x5
-    TOO_MANY_SUBSCRIBES = 0x6
+    INTERNAL_ERROR = 0x01
+    UNAUTHORIZED = 0x02
+    PROTOCOL_VIOLATION = 0x03
+    DUPLICATE_TRACK_ALIAS = 0x04
+    PARAMETER_LENGTH_MISMATCH = 0x05
+    TOO_MANY_SUBSCRIBES = 0x06
     GOAWAY_TIMEOUT = 0x10
     CONTROL_MESSAGE_TIMEOUT = 0x11
     DATA_STREAM_TIMEOUT = 0x12
@@ -61,78 +61,86 @@ class SessionCloseCode(IntEnum):
 class ContentExistsCode(IntEnum):
     """Content Exists Code"""
     NO_CONTENT = 0x0
-    EXISTS = 0x1
+    EXISTS = 0x01
     
 class SubscribeErrorCode(IntEnum):
     """SUBSCRIBE_ERROR error codes."""
     INTERNAL_ERROR = 0x0
-    INVALID_RANGE = 0x1
-    RETRY_TRACK_ALIAS = 0x2
-    TRACK_DOES_NOT_EXIST = 0x3
-    UNAUTHORIZED = 0x4
-    TIMEOUT = 0x5
+    INVALID_RANGE = 0x01
+    RETRY_TRACK_ALIAS = 0x02
+    TRACK_DOES_NOT_EXIST = 0x03
+    UNAUTHORIZED = 0x04
+    TIMEOUT = 0x05
 
 
 class SubscribeDoneCode(IntEnum):
     """SUBSCRIBE_DONE status codes."""
     UNSUBSCRIBED = 0x0
-    INTERNAL_ERROR = 0x1
-    UNAUTHORIZED = 0x2
-    TRACK_ENDED = 0x3
-    SUBSCRIPTION_ENDED = 0x4
-    GOING_AWAY = 0x5
-    EXPIRED = 0x6
-    TOO_FAR_BEHIND = 0x7
+    INTERNAL_ERROR = 0x01
+    UNAUTHORIZED = 0x02
+    TRACK_ENDED = 0x03
+    SUBSCRIPTION_ENDED = 0x04
+    GOING_AWAY = 0x05
+    EXPIRED = 0x06
+    TOO_FAR_BEHIND = 0x07
 
 
 class TrackStatusCode(IntEnum):
     """TRACK_STATUS status codes."""
-    IN_PROGRESS = 0x0
-    DOES_NOT_EXIST = 0x1
-    NOT_STARTED = 0x2
-    FINISHED = 0x3
-    RELAY_NO_INFO = 0x4
+    IN_PROGRESS = 0x00
+    DOES_NOT_EXIST = 0x01
+    NOT_STARTED = 0x02
+    FINISHED = 0x03
+    RELAY_NO_INFO = 0x04
 
 
 class FilterType(IntEnum):
     """Subscription filter types."""
-    LATEST_GROUP = 0x1
-    RECENT_GROUP = 0x1
-    LATEST_OBJECT = 0x2
-    ABSOLUTE_START = 0x3
-    ABSOLUTE_RANGE = 0x4
+    LATEST_GROUP = 0x01
+    RECENT_GROUP = 0x01
+    LATEST_OBJECT = 0x02
+    ABSOLUTE_START = 0x03
+    ABSOLUTE_RANGE = 0x04
 
 
 class GroupOrder(IntEnum):
     """Group ordering preferences."""
     PUBLISHER_DEFAULT = 0x0
-    ASCENDING = 0x1
-    DESCENDING = 0x2
+    ASCENDING = 0x01
+    DESCENDING = 0x02
 
 
 class ObjectStatus(IntEnum):
     """Object status codes."""
     NORMAL = 0x0
-    DOES_NOT_EXIST = 0x1
-    END_OF_GROUP = 0x3
-    END_OF_TRACK_AND_GROUP = 0x4
-    END_OF_TRACK = 0x5
+    DOES_NOT_EXIST = 0x01
+    END_OF_GROUP = 0x03
+    END_OF_TRACK_AND_GROUP = 0x04
+    END_OF_TRACK = 0x05
 
 
 class ForwardingPreference(IntEnum):
     """Object forwarding preferences."""
     TRACK = 0x0
-    SUBGROUP = 0x1
-    DATAGRAM = 0x2
+    SUBGROUP = 0x01
+    DATAGRAM = 0x02
 
 
 class DataStreamType(IntEnum):
     """Stream type identifiers."""
-    SUBGROUP_HEADER = 0x4
-    FETCH_HEADER = 0x5
+    SUBGROUP_HEADER = 0x04
+    FETCH_HEADER = 0x05
 
 
 class DatagramType(IntEnum):
     """Datagram type identifiers."""
-    OBJECT_DATAGRAM = 0x1
-    OBJECT_DATAGRAM_STATUS = 0x2
+    OBJECT_DATAGRAM = 0x01
+    OBJECT_DATAGRAM_STATUS = 0x02
+
+
+class MOQTException(Exception):
+    def __init__(self, error_code: SessionCloseCode, reason_phrase: str):
+        self.error_code = error_code
+        self.reason_phrase = reason_phrase
+        super().__init__(f"{reason_phrase} ({error_code})")
+        

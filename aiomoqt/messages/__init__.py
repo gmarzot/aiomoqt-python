@@ -7,7 +7,7 @@ from .fetch import *
 from .track import *
 
 __all__ = [
-    'MOQTMessage', 'MOQTMessageType',
+    'MOQTMessage', 'MOQTMessageType', 'MOQTUnderflow',
     'ClientSetup', 'ServerSetup', 'GoAway',
     'Subscribe', 'SubscribeOk', 'SubscribeError', 'SubscribeUpdate',
     'Unsubscribe', 'SubscribeDone', 'MaxSubscribeId', 'SubscribesBlocked',
@@ -15,7 +15,7 @@ __all__ = [
     'Announce', 'AnnounceOk', 'AnnounceError', 'Unannounce', 'AnnounceCancel',
     'SubscribeAnnounces', 'SubscribeAnnouncesOk', 'SubscribeAnnouncesError',
     'UnsubscribeAnnounces',
-    'Fetch', 'FetchOk', 'FetchError', 'FetchCancel',
+    'Fetch', 'FetchObject', 'FetchOk', 'FetchError', 'FetchCancel',
     'SubgroupHeader', 'FetchHeader',
     'ObjectDatagram', 'ObjectDatagramStatus', 'ObjectHeader',
     'BUF_SIZE'

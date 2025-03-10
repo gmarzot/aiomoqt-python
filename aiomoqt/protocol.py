@@ -1,32 +1,34 @@
+import re
+import time
+
+from functools import partial
+from collections import defaultdict 
+from typing import Optional, Type, Union, List, Set, Tuple, Dict, DefaultDict, Callable
+
 import asyncio
 from asyncio import Future
-from typing import Optional, Type, Union, List, Tuple, Dict, Callable
-from importlib.metadata import version
 
-from aioquic.buffer import Buffer, UINT_VAR_MAX
+from aioquic.buffer import Buffer, UINT_VAR_MAX, BufferReadError
 from aioquic.asyncio.protocol import QuicConnectionProtocol
-from aioquic.quic.connection import QuicConnection, QuicConnectionError, QuicErrorCode, stream_is_unidirectional
+from aioquic.quic.connection import QuicConnection, QuicErrorCode, stream_is_unidirectional
 from aioquic.quic.events import QuicEvent, StreamDataReceived, ProtocolNegotiated, DatagramFrameReceived
 from aioquic.h3.connection import H3Connection, ErrorCode, H3_ALPN
 from aioquic.h3.events import HeadersReceived
 
 from .types import *
 from .messages import *
-from .utils.logger import get_logger
+from .utils.logger import *
 
-logger = get_logger(__name__)
-
+from importlib.metadata import version
 USER_AGENT = f"aiomoqt/{version('aiomoqt')}"
+
 MOQT_VERSIONS = [0xff000008, 0xff080009]
 MOQT_CUR_VERSION = 0xff000008
 
+MOQT_IDLE_STREAM_TIMEOUT = 30
 
-class MOQTException(Exception):
-    def __init__(self, error_code: SessionCloseCode, reason_phrase: str):
-        self.error_code = error_code
-        self.reason_phrase = reason_phrase
-        super().__init__(f"{reason_phrase} ({error_code})")
-        
+logger = get_logger(__name__)
+    
 
 class H3CustomConnection(H3Connection):
     """Custom H3Connection wrapper to support alternate SETTINGS"""
@@ -74,7 +76,9 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         self._moqt_session_closed: Future[Tuple[int,str]] = self._loop.create_future()
         self._next_subscribe_id = 1  # prime subscribe id generator
         self._next_track_alias = 1  # prime track alias generator
-        self._tasks = set()
+        self._stream_queues: DefaultDict[int, asyncio.Queue[Buffer]] = defaultdict(asyncio.Queue)
+        self._stream_tasks: Dict[int, asyncio.Task] = {}
+        self._tasks: Set[asyncio.Task] = set()
         self._close_err = None  # tuple holding latest (error_code, Reason_phrase)
         
         self._data_streams: Dict[int, int] = {}  # keep track of active data streams
@@ -88,6 +92,22 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         self._control_msg_registry = dict(MOQTSessionProtocol.MOQT_CONTROL_MESSAGE_REGISTRY)
         self._stream_data_registry = dict(MOQTSessionProtocol.MOQT_STREAM_DATA_REGISTRY)
         self._dgram_data_registry = dict(MOQTSessionProtocol.MOQT_DGRAM_DATA_REGISTRY)
+
+    @staticmethod
+    def get_ts_objid(line: str):
+        # Convert bytes to string if needed
+        if isinstance(line, bytes):
+            line = line.decode('utf-8', errors='replace')
+        # Pattern to match the timestamp and object ID
+        pattern = r'^\|\s+(\d+)\s+\|\S\|\s+(\d+\.\d+(?:\.\d+)*)'
+        match = re.search(pattern, line)
+        if match:
+            timestamp = match.group(1)
+            object_id = match.group(2)
+            timestamp = int(timestamp) if timestamp is not None else 0
+            object_id = object_id if object_id is not None else "<no-match>"
+            return timestamp, object_id
+        return 0, "<no-match>"
 
     @staticmethod
     def _make_namespace_tuple(namespace: Union[str, Tuple[str, ...]]) -> Tuple[bytes, ...]:
@@ -112,120 +132,16 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         self._next_track_alias += 1
         self._track_aliases[track_alias] = subscribe_id
         return track_alias
-
-    # def transmit(self) -> None:
-    #     """Transmit pending data."""
-    #     logger.debug("Transmitting data")
-    #     super().transmit()
-
-    def connection_made(self, transport):
-        """Called when QUIC connection is established."""
-        super().connection_made(transport)
-        self._h3 = H3CustomConnection(self._quic, enable_webtransport=True)
-        logger.info("H3 connection initialized")
-
-    def quic_event_received(self, event: QuicEvent) -> None:
-        """Handle incoming QUIC events."""
-        # QUIC errors terminate the session
-        event_class = event.__class__.__name__
-        if hasattr(event, 'error_code'):  # Log any errors
-            error = getattr(event, 'error_code', QuicErrorCode.INTERNAL_ERROR)
-            reason = getattr(event, 'reason_phrase', event_class)
-            logger.error(f"QUIC error: code: {error} reason: {reason}")
-            self._close_session(error,reason)
-            return
-        # debug output    
-        stream_id = getattr(event, 'stream_id', 'unknown')
-        data = getattr(event, 'data', None)
-        hex_data = f"0x{data.hex()}" if data else "<no data>"
-        logger.debug(f"QUIC event: stream {stream_id}: {event_class}: {hex_data}")
-        
-        if isinstance(event, ProtocolNegotiated):
-            # Instantiate the H3 Connection
-            if event.alpn_protocol in H3_ALPN and self._h3 is None:
-                logger.debug(f"QUIC event: Creating H3 Connection")
-                self._h3 = H3CustomConnection(self._quic, enable_webtransport=True)
-        elif isinstance(event, StreamDataReceived) and self._wt_session_setup.done():
-            # Detect abrupt closure of critical streams
-            if (event.end_stream and len(event.data) == 0 and
-                stream_id in [self._control_stream_id, self._session_id]):
-                self._close_session(
-                    SessionCloseCode.INTERNAL_ERROR, 
-                    f"critical stream closed by remote peer: {stream_id}"
-                )
-                return
-            if self._closed.is_set() or self._close_err is not None:
-                logger.warning(f"QUIC event: event received after close: {self._close_err} {self._closed.is_set()}")
-                return
-            msg_buf = Buffer(data=event.data)
-            msg_len = msg_buf.capacity
-            # Assume first bidi stream is MOQT control stream
-            if self._control_stream_id is None and not stream_is_unidirectional(stream_id):
-                self._control_stream_id = stream_id
-                # XXX - Strip of initial stream identifier
-                # logger.debug(f"MOQT event: stripping off control stream id: {stream_id}")
-                msg_buf.pull_uint_var()
-                msg_buf.pull_uint_var()
-                                    
-            # Handle MOQT Control messages
-            if stream_id == self._control_stream_id:
-                while msg_buf.tell() < msg_len:
-                    msg = self._moqt_handle_control_message(msg_buf)
-                    if msg is None:
-                        error = f"control stream: parsing failed at position: {msg_buf.tell()} of {msg_len} bytes"
-                        logger.error(f"MOQT error: " + error)
-                        self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
-                        break
-                return
-            
-            # Handle MOQT Data messages
-            if stream_is_unidirectional(stream_id):
-                if stream_id not in self._data_streams:
-                    # XXX - Strip of initial stream identifier - there has to be a better way
-                    if stream_id not in self._data_streams:
-                        # logger.debug(f"MOQT event: stripping off data stream id: {stream_id}")
-                        msg_buf.pull_uint_var()
-                        msg_buf.pull_uint_var()
-                        self._data_streams[stream_id] = 0
-
-                
-                while msg_buf.tell() < msg_len:
-                    data_msg = self._moqt_handle_data_stream(stream_id, msg_buf)
-                    if isinstance(data_msg, ObjectHeader) and data_msg.status != ObjectStatus.NORMAL:
-                        logger.debug(f"MOQT stream: object status: {data_msg.status}")
-                        break
-                    if data_msg is None:
-                        error = f"control stream: parsing failed at position: {msg_buf.tell()}"
-                        logger.error(f"MOQT error: " + error)
-                        self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
-                return
-        elif isinstance(event, DatagramFrameReceived):
-            msg_buf = Buffer(data=event.data)
-            msg_len = msg_buf.capacity
-            # Mayneed to strip off some QUIC identifier
-            # msg_buf.pull_uint_var()
-            # msg_buf.pull_uint_var()      
-            
-                      
-        # Pass remaining events to H3
-        if self._h3 is not None:
-            settings = self._h3.received_settings
-            try:
-                for h3_event in self._h3.handle_event(event):
-                    self._h3_handle_event(h3_event)
-                # Check if settings just received
-                if self._h3.received_settings != settings:
-                    settings = self._h3.received_settings
-                    logger.debug(f"H3 event: SETTINGS received: stream {stream_id}")
-                    if settings is not None:
-                        for setting_id, value in settings.items():
-                            logger.debug(f"  Setting 0x{setting_id:x} = {value}")
-            except Exception as e:
-                logger.error(f"H3 error: error handling event: {e}")
-                raise
+    
+    def _control_task_done(self, task: asyncio.Task) -> None:
+        """Remove control task from set."""
+        self._tasks.discard(task)
+        if task.cancelled():
+            logger.warning("MOQT warn: control task cancelled")
         else:
-            logger.error(f"QUIC event: stream {stream_id}: event not handled({event_class})")
-  
+            e = task.exception()
+            if e: logger.error(f"MOQT error: control task failed with exception: {e}")
+            
     def _moqt_handle_control_message(self, buf: Buffer) -> Optional[MOQTMessage]:
         """Process an incoming message."""
         buf_len = buf.capacity
@@ -265,7 +181,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
             if handler is not None:
                 logger.debug(f"MOQT event: creating handler task: {handler.__name__}")
                 task = asyncio.create_task(handler(self, msg))
-                task.add_done_callback(lambda t: self._tasks.discard(t))
+                task.add_done_callback(self._control_task_done)
                 self._tasks.add(task)
                 
             return msg
@@ -273,51 +189,170 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         except Exception as e:
             logger.error(f"handle_control_message: error handling control message: {e}")
             raise
+ 
+    def _stream_task_done(self, stream_id: int, task: asyncio.Task) -> None:
+        """Remove stream task from dict."""
+        if stream_id in self._stream_tasks:
+            del self._stream_tasks[stream_id]
+        else:
+            logger.error(f"MOQT error: _stream_task_done: stream does not exist: {stream_id}")
+        if task.cancelled():
+            logger.warning("MOQT warn: stream task cancelled")
+        else:
+            e = task.exception()
+            if e: logger.error(f"MOQT error: stream task failed with exception: {e}")
+ 
+    # task for processing data streams
+    async def _process_data_stream(self, stream_id: int) -> None:
+        ''' Subgroup stream data processing task '''
+        re_buf = Buffer(capacity=(1024*1024*2))  # pre-allocate large buffer accumulator
+        cur_pos: int = 0
+        consumed: int = 0
+        needed: int = 0
+        group_id = None
+        subgroup_id = None
+        object_id = None
+        while True:
+            try:
+                while True:
+                    async with asyncio.timeout(MOQT_IDLE_STREAM_TIMEOUT):
+                        msg_buf = await self._stream_queues[stream_id].get()
+                        
+                    if msg_buf is None:  # Sentinel done value - return
+                        logger.debug(f"MOQT stream({stream_id}): queue closed: task shutdown")
+                        return
+                    
+                    cur_pos = msg_buf.tell()
+                    msg_len = msg_buf.capacity
 
-    def _moqt_handle_data_stream(self, stream_id: int, buf: Buffer) -> MOQTMessage:
+                    if msg_len < needed:
+                        needed -= msg_len
+                        re_buf.push_bytes(msg_buf.data_slice(cur_pos,msg_len))
+                        have = re_buf.tell()
+                        logger.debug(f"MOQT stream({stream_id}): data added: len: {msg_len} have: {have} still need: {needed}")
+                    elif cur_pos == msg_len:
+                        continue  # special case where the stream id is all we got - next
+                    else:
+                        logger.debug(f"MOQT stream({stream_id}): data received: pos: {cur_pos} len: {msg_len} needed: {needed}")
+                        break
+                        
+            except asyncio.TimeoutError:
+                logger.warning(f"MOQT stream({stream_id}): idle timeout: {group_id}.{subgroup_id}.{object_id}")
+                return
+            
+            # if more data was needed, add it to re_buf accumulator and reprocess
+            if needed > 0:
+                re_buf.push_bytes(msg_buf.data_slice(cur_pos,msg_buf.capacity))
+                msg_len = re_buf.tell()
+                msg_buf = re_buf  # process accumulator, GC msg_buf
+                msg_buf.seek(0)
+                cur_pos = 0
+                needed = 0
+                
+
+            while cur_pos < msg_len:
+                logger.debug(f"MOQT stream({stream_id}): process message: pos: {cur_pos} len: {msg_len}")
+                msg_obj = None
+                try:
+                    msg_obj = self._moqt_handle_data_stream(stream_id, msg_buf, msg_len)
+                except MOQTUnderflow as e:
+                    logger.debug(f"MOQT MOQTUnderflow({stream_id}): at pos: {e.pos} need: {e.needed}")
+                    needed = e.needed
+                    break
+                except BufferReadError as e:
+                    logger.debug(f"MOQT BufferReadError({stream_id}): cur_pos: {cur_pos} tell: {msg_buf.tell()}")
+                    needed = 1  # just get the next msg_buf - we dont know amount needed
+                    break
+                    
+                if msg_obj is None:
+                    error = f"MOQT error: data stream({stream_id}):: parsing failed at position: "
+                    logger.error(error + f"{msg_buf.tell()} of {msg_len} bytes")
+                    self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
+                    raise asyncio.CancelledError(SessionCloseCode.PROTOCOL_VIOLATION, error)
+                
+                consumed = msg_buf.tell() - cur_pos
+                cur_pos = msg_buf.tell()
+                if isinstance(msg_obj, ObjectHeader):
+                    assert object_id is None or msg_obj.object_id > object_id
+                    object_id = msg_obj.object_id
+                    status = ObjectStatus(msg_obj.status).name
+                    if status != ObjectStatus.NORMAL:
+                        if msg_obj.status in (ObjectStatus.END_OF_GROUP, ObjectStatus.END_OF_TRACK):
+                                logger.info(f"MOQT stream({stream_id}): {group_id}.{subgroup_id}.{object_id} status: {status} size: {consumed} bytes")
+                                self._stream_queues[stream_id].closed = True
+                                return
+                    (sts, id) = MOQTSessionProtocol.get_ts_objid(msg_obj.payload)
+                    rts = int(time.time()*1000)
+                    # logger.info(f"MOQT stream({stream_id}): {id} status: {status} size: {consumed} bytes delay: {rts - sts} ms")
+                    logger.info(f"MOQT stream({stream_id}): {group_id}.{subgroup_id}.{object_id} {msg_obj} size: {consumed} bytes")
+                elif isinstance(msg_obj, SubgroupHeader):
+                    logger.info(f"MOQT stream({stream_id}): SubgroupHeader: {msg_obj.group_id}.{msg_obj.subgroup_id} {msg_obj} size: {consumed} bytes")
+                    assert group_id is None or msg_obj.group_id > group_id
+                    group_id = msg_obj.group_id
+                    subgroup_id = msg_obj.subgroup_id
+                else:
+                    raise RuntimeError
+
+            if needed > 0:
+                have = msg_len - cur_pos
+                # yuck - python memove - custom stream reader in progress
+                saved_bytes = msg_buf.data_slice(cur_pos, msg_len)
+                if have < needed:  # we might not know how much we need
+                    needed -= have
+                re_buf.seek(0)
+                re_buf.push_bytes(saved_bytes)
+                logger.debug(f"MOQT stream({stream_id}): saved {have} bytes tell: {re_buf.tell()} still need: {needed}")
+                cur_pos = 0
+
+    def _moqt_handle_data_stream(self, stream_id: int, buf: Buffer, len: int) -> MOQTMessage:
         """Process incoming data messages (not control messages)."""
         if buf.capacity == 0 or buf.tell() >= buf.capacity:
-            logger.error(f"MOQT stream data: stream {stream_id}: no data {buf.tell()}")
+            logger.error(f"MOQT stream({stream_id}): no data at position: {buf.tell()}")
             return
         
-        logger.debug(f"MOQT stream data: stream {stream_id}: 0x{buf.data_slice(0,buf.capacity)}")
-
         try:
+            pos = buf.tell()
             msg_header = None
-            if self._data_streams.get(stream_id):
-                msg_header = ObjectHeader.deserialize(buf)
-                if msg_header is None:
-                    error = f"data stream ({stream_id}) parsing failed at: {buf.tell()}"
-                    logger.error(f"MOQT error: " + error)
-                    self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
-                    return
-                logger.debug(f"MOQT stream data continued: stream {stream_id}: {msg_header}")
-            else:
+            # new data streams will not yet have an entry
+            if self._data_streams.get(stream_id) is None:
                 # Get stream type from first byte
                 stream_type = buf.pull_uint_var()
                 assert stream_type == DataStreamType.SUBGROUP_HEADER
-                msg_header = SubgroupHeader.deserialize(buf)           
+                # logger.debug(f"MOQT stream({stream_id}): SubgroupHeader parse: data: 0x{buf.data_slice(pos,pos+8).hex()}...")
+                msg_header = SubgroupHeader.deserialize(buf)
+                if msg_header is None:
+                    error = f"data stream {stream_id}: SubgroupHeader parse failed at: {buf.tell()}"
+                    logger.error(f"MOQT error: " + error)
+                    self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
+                    return None
+                consumed = buf.tell() - pos        
+                logger.debug(f"MOQT stream({stream_id}): SubgroupHeader parse: id: {msg_header.group_id} consumed: {consumed} bytes")
+                # logger.debug(f"MOQT stream({stream_id}): SubgroupHeader parse: data: 0x{buf.data_slice(pos,buf.tell()).hex()}...")
+                # record that the data stream header has been processed    
                 self._data_streams[stream_id] = msg_header.track_alias
-
-                # # Process remaining buf as object data
-                # if handler is not None:
-                #     logger.debug(f"MOQT event: handler task: {handler.__name__}")
-                #     task = asyncio.create_task(handler(self, msg_header, buf))
-                #     task.add_done_callback(lambda t: self._tasks.discard(t))
-                #     self._tasks.add(task)
+            else:
+                # logger.debug(f"MOQT stream({stream_id}): ObjectHeader parse: data: 0x{buf.data_slice(pos,pos+8).hex()}...")
+                msg_header = ObjectHeader.deserialize(buf, len)
+                if msg_header is None:
+                    error = f"MOQT stream({stream_id}): ObjectHeader parse failed at: {buf.tell()}"
+                    logger.error(f"MOQT error: " + error)
+                    self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
+                    return None
+                consumed = buf.tell() - pos        
+                logger.debug(f"MOQT stream({stream_id}): ObjectHeader parse: id: {msg_header.object_id} consumed: {consumed} bytes")
+                # logger.debug(f"MOQT stream({stream_id}): ObjectHeader parse: data: 0x{buf.data_slice(pos,pos+consumed).hex()}...")
                     
             return msg_header
+        except Exception:
+            raise
 
-        except Exception as e:
-            logger.error(f"_moqt_handle_data_stream: error handling data message: {e}")
-
-    def _moqt_handle_data_dgram(self, buf: Buffer) -> None:
+    def _moqt_handle_data_dgram(self, buf: Buffer) -> MOQTMessageType:
         """Process incoming data messages (not control messages)."""
         if buf.capacity == 0 or buf.tell() >= buf.capacity:
-            logger.error(f"MOQT datagram data: no data {buf.tell()}")
+            logger.error(f"MOQT datagram: no data {buf.tell()}")
             return
         
-        logger.debug(f"MOQT datagram data: 0x{buf.data_slice(0,buf.capacity)}")
+        logger.debug(f"MOQT handle datagram: 0x{buf.data_slice(0,min(buf.capacity,12))}")
 
         # Get stream type from first byte
         dgram_type = buf.pull_uint_var()
@@ -327,33 +362,175 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                 error = f"datagram parsing failed at: {buf.tell()}"
                 logger.error(f"MOQT error: " + error)
                 self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
-                return
-            logger.debug(f"MOQT event: ObjectDatagram: {msg.group_id}.{msg.object_id} alias: {msg.track_alias} prio: {msg.publisher_priority}")               
+                return msg
+            (sts, id) = MOQTSessionProtocol.get_ts_objid(msg.payload)
+            rts = int(time.time()*1000)
+            logger.info(f"MOQT event: ObjectDatagram: {id} alias: {msg.track_alias} len: {buf.capacity} bytes delay: {rts-sts} ms")
+            return msg            
         elif dgram_type == DatagramType.OBJECT_DATAGRAM_STATUS:
             msg = ObjectDatagramStatus.deserialize(buf)
             if msg is None:
                 error = f"datagram parsing failed at: {buf.tell()}"
                 logger.error(f"MOQT error: " + error)
                 self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
-                return
-            logger.debug(f"MOQT event: ObjectDatagram: {msg.group_id}.{msg.object_id} alias: {msg.track_alias} status: {msg.status}")               
+                return msg
+            logger.info(f"MOQT event: ObjectDatagramStatus: {msg.group_id}.{msg.object_id} status: {msg.status} len: {buf.capacity} bytes")               
         else:
             error = f"datagram type unknown: {dgram_type}"
             logger.error(f"MOQT error: " + error)
             self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
             return
-                            
+    
+    # def transmit(self) -> None:
+    #     """Transmit pending data."""
+    #     logger.debug("Transmitting data")
+    #     super().transmit()
+
+    def connection_made(self, transport):
+        """Called when QUIC connection is established."""
+        super().connection_made(transport)
+        self._h3 = H3CustomConnection(self._quic, enable_webtransport=True)
+        logger.info("H3 connection initialized")
+
+    # primary event handling for all QUIC messaging
+    def quic_event_received(self, event: QuicEvent) -> None:
+        """Handle incoming QUIC events."""
+        
+        event_class = class_name(event)
+
+        # QUIC errors terminate the session
+        if hasattr(event, 'error_code'):  # Log any errors
+            error = getattr(event, 'error_code', QuicErrorCode.INTERNAL_ERROR)
+            reason = getattr(event, 'reason_phrase', event_class)
+            logger.error(f"QUIC error: code: {error} reason: {reason}")
+            self._close_session(error, reason)
+            return
+        
+        # data_len = len(event.data) if hasattr(event, 'data') else 0
+        # logger.debug(f"QUIC event: {event_class}: len: {data_len} bytes")
+        
+        if isinstance(event, ProtocolNegotiated):
+            # Enforce supported ALPN
+            if event.alpn_protocol in H3_ALPN:
+                logger.debug(f"QUIC event: ALPN ProtocolNegotiated: {event.alpn_protocol}")
+            elif event.alpn_protocol == "moq-00":
+                # XXX - handle QUIC connection
+                logger.debug(f"QUIC event: ALPN ProtocolNegotiated alpn: {event.alpn_protocol}")
+            else:
+                logger.error(f"QUIC error: unknown ALPN: {event.alpn_protocol}")
+                self._close_session(
+                    SessionCloseCode.UNAUTHORIZED, 
+                    f"unsupported ALPN: {event.alpn_protocol}"
+                )
+            return
+        elif isinstance(event, StreamDataReceived) and self._wt_session_setup.done():
+            if self._closed.is_set() or self._close_err is not None:
+                close_condition = f"MOQT: {self._close_err} QUIC: {self._closed.is_set()}"
+                logger.warning(f"QUIC event: stream data after close: " + close_condition)
+                return
+            
+            # Detect abrupt closure of critical streams
+            stream_id = event.stream_id
+            if (event.end_stream and len(event.data) == 0 and
+                stream_id in [self._control_stream_id, self._session_id]):
+                self._close_session(
+                    SessionCloseCode.INTERNAL_ERROR, 
+                    f"critical stream closed by remote peer: {stream_id}"
+                )
+                return
+            
+            msg_buf = Buffer(data=event.data)
+            msg_len = msg_buf.capacity
+            # logger.debug(f"MOQT event: StreamDataReceived: stream: {stream_id} (0x{msg_buf.data_slice(0, min(msg_len,16)).hex()}...)")
+            
+            # Handle possible MoQT control stream 
+            if not stream_is_unidirectional(stream_id):
+                # Assume first bidi stream is MoQT control stream
+                if self._control_stream_id is None:
+                    self._control_stream_id = stream_id
+                    # strip of initial WT stream identifier
+                    msg_buf.pull_uint_var()
+                    msg_buf.pull_uint_var()
+                elif stream_id != self._control_stream_id:
+                    # XXX ignore additional bidi stream for now - for now
+                    logger.warning(f"MOQT event: unrecognized bidirectional stream({stream_id}):")
+                    return                      
+                        
+            # Handle MoQT control messages
+            if stream_id == self._control_stream_id:
+                # XXX handle underflow in control stream as well
+                while msg_buf.tell() < msg_len:
+                    msg = self._moqt_handle_control_message(msg_buf)
+                    if msg is None:
+                        error = f"control stream: parsing failed at position: {msg_buf.tell()} of {msg_len} bytes"
+                        logger.error(f"MOQT error: " + error)
+                        self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
+                        break
+                return
+
+            # Handle MoQT data messages
+            if stream_is_unidirectional(stream_id):
+                if stream_id not in self._data_streams:
+                    # strip of initial H3/WT stream identifier
+                    msg_buf.pull_uint_var()
+                    msg_buf.pull_uint_var()
+                    # record the stream exists and stream id stripped
+                    self._data_streams[stream_id] = None
+                    # create a handler task for this stream
+                    assert stream_id not in self._stream_tasks
+                    task = asyncio.create_task(self._process_data_stream(stream_id))
+                    self._stream_tasks[stream_id] = task
+                    task.add_done_callback(partial(self._stream_task_done, stream_id))
+                    logger.debug(f"MOQT event: creating _process_data_stream task: {stream_id}")
+                    
+                # Queue the event data buffer for processing
+                if msg_buf.tell() < msg_len:
+                    logger.debug(f"MOQT event: pushing data on stream: {stream_id} pos: {msg_buf.tell()} len: {msg_len}")
+                    self._stream_queues[stream_id].put_nowait(msg_buf)
+                else:
+                    logger.debug(f"MOQT event: skipping empty data: {stream_id} pos: {msg_buf.tell()} len: {msg_len}")
+                    
+                return
+
+        elif isinstance(event, DatagramFrameReceived) and self._wt_session_setup.done():
+            msg_buf = Buffer(data=event.data)
+            msg_len = msg_buf.capacity
+            logger.debug(f"MOQT event: DatagramFrameReceived: 0x{msg_buf.data_slice(0,min(msg_len,16)).hex()}")
+            # strip off some QUIC quarter identifier
+            msg_buf.pull_uint_var()
+            self._moqt_handle_data_dgram(msg_buf)
+            return
+                      
+        # Pass remaining events to H3
+        if self._h3 is not None:
+            settings = self._h3.received_settings
+            try:
+                for h3_event in self._h3.handle_event(event):
+                    self._h3_handle_event(h3_event)
+                # Check if settings just received
+                if self._h3.received_settings != settings:
+                    settings = self._h3.received_settings
+                    logger.debug(f"H3 event: SETTINGS received:")
+                    if settings is not None:
+                        for setting_id, value in settings.items():
+                            logger.debug(f"  Setting 0x{setting_id:x} = {value}")
+            except Exception as e:
+                logger.error(f"H3 error: error handling event: {e}")
+                raise
+        else:
+            logger.error(f"QUIC event: event not handled({event_class})")
+  
     def _h3_handle_event(self, event: QuicEvent) -> None:
         """Handle H3-specific events."""
         logger.debug(f"H3 event: {event}")
         if isinstance(event, HeadersReceived):
             return self._h3_handle_headers_received(event)
-
-        msg_class = event.__class__.__name__
+        msg_class = class_name(event)
         data = getattr(event, 'data', None)
         hex_data = f"0x{data.hex()}" if data is not None else "<no data>"
         logger.debug(f"H3 event: stream {event.stream_id}: {msg_class}: {hex_data}")
-        self._h3.handle_event(event)
+        # pass to parent H3 to handle - XX not required?
+        # self._h3.handle_event(event)
 
     def _h3_handle_headers_received(self, event: HeadersReceived) -> None:
         """Process incoming H3 headers."""
@@ -380,41 +557,71 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                 
         if is_client:
             if status == b"200":
-                logger.info(f"H3 event: WebTransport client session setup: session id: {stream_id}")
+                logger.debug(f"H3 event: WebTransport client session setup: session id: {stream_id}")
                 self._wt_session_setup.set_result(True)
             else:
                 error = f"WebTransport session setup failed ({status})"
                 logger.error(f"H3 error: stream {stream_id}: " + error)
                 self._close_session(ErrorCode.H3_CONNECT_ERROR, error)
         else:
-            # Server: Handle incoming WebTransport CONNECT request - XXX check endpoint
+            # Server: Handle incoming WebTransport CONNECT request
             if method == b"CONNECT" and protocol == b"webtransport":
-                self._session_id = stream_id
-                # Send 200 response with WebTransport headers
-                response_headers = [
-                    (b":status", b"200"),
+                if path == self._session.endpoint:
+                    
+                    self._session_id = stream_id
+                    # Send 200 response with WebTransport headers
+                    response_headers = [
+                        (b":status", b"200"),
+                        (b"server", USER_AGENT.encode()),
+                        (b"sec-webtransport-http3-draft", b"draft02"),
+                    ]
+                    self._h3.send_headers(
+                        stream_id=stream_id,
+                        headers=response_headers,
+                        end_stream=False
+                    )
+                    self.transmit()
+                    logger.debug(f"H3 event: WebTransport server session setup: session id: {stream_id}")
+                    self._wt_session_setup.set_result(True)
+                else:
+                    # Endpoint doesn't match, return 404
+                    logger.warning(f"H3 event: path not found: {path}")
+                    error_headers = [
+                        (b":status", b"404"),
+                        (b"server", USER_AGENT.encode()),
+                    ]
+                    self._h3.send_headers(
+                        stream_id=stream_id,
+                        headers=error_headers,
+                        end_stream=True
+                    )
+                    self.transmit()
+            else:
+                # Unsupported HTTP transaction
+                logger.warning(f"H3 event: path not found: {path}")
+                error_headers = [
+                    (b":status", b"500"),
                     (b"server", USER_AGENT.encode()),
-                    (b"sec-webtransport-http3-draft", b"draft02"),
                 ]
                 self._h3.send_headers(
                     stream_id=stream_id,
-                    headers=response_headers,
-                    end_stream=False
+                    headers=error_headers,
+                    end_stream=True
                 )
                 self.transmit()
-                logger.info(f"H3 event: WebTransport server session setup: session id: {stream_id}")
-                self._wt_session_setup.set_result(True)
-            else:
-                error = f"Invalid WebTransport request"
-                logger.error(f"H3 error: stream {event.stream_id}: " + error)
-                self._close_session(ErrorCode.H3_CONNECT_ERROR, error)
-                
+            
     def _close_session(self, 
               error_code: SessionCloseCode = SessionCloseCode.NO_ERROR, 
               reason_phrase: str = "no error") -> None:
-        """Close the MOQT session."""
+        """Close the MoQT session."""
         logger.error(f"MOQT error: closing: {reason_phrase} ({error_code})")
         self._close_err = (error_code, reason_phrase)
+
+        # Signal all stream tasks to shut down gracefully with sentinel value
+        for stream_id in list(self._stream_tasks.keys()):
+            if stream_id in self._stream_queues:
+                self._stream_queues[stream_id].put_nowait(None)
+                
         if not self._wt_session_setup.done():
             self._wt_session_setup.set_result(False)
         if not self._moqt_session_setup.done():
@@ -431,12 +638,14 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
             error_code, reason_phrase =  self._close_err
         logger.info(f"MOQT session: closing: {reason_phrase} ({error_code})")
         if self._session_id is not None:
-            logger.debug(f"H3 session: closing: {self._h3.__class__.__name__} ({self._session_id})")
-            self._h3.send_data(self._session_id, b"", end_stream=True)
+            self._h3._quic.close(QuicErrorCode.NO_ERROR)
+            logger.debug(f"H3 session: closing: {class_name(self._h3)} ({self._session_id})  QUIC: {self._h3._is_done}")
+            if not self._h3._is_done:
+                self._h3.send_data(self._session_id, b"", end_stream=True)
             self._session_id = None
         # drop H3 session
         self._h3 = None
-        # set the exit condition for the async with session
+        # set the async exit condition for session
         if not self._moqt_session_closed.done():
             self._moqt_session_closed.set_result((error_code, reason_phrase))
         # call parent close and transmit all
@@ -449,8 +658,8 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         return True
 
 
-    async def client_session_init(self, timeout: int = 10) -> None:
-        """Initialize WebTransport and MOQT client session."""
+    async def client_session_init(self, timeout: int = 10) -> bool:
+        """Initialize WebTransport and MoQT client session."""
         # Create WebTransport session
         self._session_id = self._h3._quic.get_next_available_stream_id(is_unidirectional=False)
 
@@ -471,22 +680,24 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
             
         self._h3.send_headers(stream_id=self._session_id, headers=headers, end_stream=False)
         self.transmit()
+        
         # Wait for WebTransport session establishment
         try:
             async with asyncio.timeout(timeout):
                 result = await self._wt_session_setup
             result = "SUCCESS" if result else "FAILED"
-            status = "False" if self._close_err is None else f"True ({self._close_err})"
-            logger.debug(f"H3 event: WebTransport setup: {result} closed: {status}")
+            logger.info(f"H3 event: WebTransport setup: {result}")
         except asyncio.TimeoutError:
-            logger.error("WebTransport session establishment timeout")
-            raise
+            error = f"WebTransport session establishment timeout: {timeout} sec"
+            logger.error("H3 error: " + error)
+            self._close_session(SessionCloseCode.CONTROL_MESSAGE_TIMEOUT, error)
+            raise MOQTException(*self._close_err)
 
         # Check for H3 connection close
-        if self._close_err:
+        if self._close_err is not None:
             raise MOQTException(*self._close_err)
         
-        # Create MOQT control stream
+        # Create MoQT control stream
         self._control_stream_id = self._h3.create_webtransport_stream(session_id=self._session_id)
         logger.info(f"MOQT: control stream created stream id: {self._control_stream_id}")
 
@@ -497,7 +708,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         )
 
         # Wait for SERVER_SETUP
-        session_setup = None
+        session_setup = False
         try: 
             async with asyncio.timeout(timeout):
                 session_setup = await self._moqt_session_setup
@@ -505,9 +716,10 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
             error = "timeout waiting for SERVER_SETUP"
             logger.error("MOQT error: " + error)
             self._close_session(SessionCloseCode.CONTROL_MESSAGE_TIMEOUT, error)
-            raise
+            pass
         
-        if not session_setup:
+        if not session_setup or self._close_err is not None:
+            logger.error(f"MOQT error: session setup failed: {session_setup}")
             raise MOQTException(*self._close_err)
         
         logger.info(f"MOQT session: setup complete: {result}")
@@ -515,7 +727,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
 
 
     def send_control_message(self, buf: Buffer) -> None:
-        """Send a MOQT message on the control stream."""
+        """Send a MoQT message on the control stream."""
         if self._quic is None or self._control_stream_id is None:
             raise MOQTException(SessionCloseCode.INTERNAL_ERROR, "control stream not intialized")
         
@@ -529,7 +741,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         self.transmit()
 
     def send_dgram_message(self, buf: Buffer) -> None:
-        """Send a MOQT message on the control stream."""
+        """Send a MoQT message on the control stream."""
         if self._quic is None:
             raise MOQTException(SessionCloseCode.INTERNAL_ERROR, "QUIC not intialized")
                 
@@ -774,7 +986,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                 # Create synthetic error response
                 response = SubscribeDone(
                     subscribe_id=subscribe_id,
-                    stream_count=0,  # XXX what to do
+                    stream_count=UINT_VAR_MAX,  # XXX we dont count streams yet
                     status_code=SubscribeDoneCode.INTERNAL_ERROR,  # TIMEOUT error code
                     reason="Unsubscribe Response Timeout"
                 )
