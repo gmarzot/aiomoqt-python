@@ -294,7 +294,7 @@ class ObjectDatagram(MOQTMessage):
         payload_len = 0 if self.payload is None else len(self.payload)
         buf = Buffer(capacity=BUF_SIZE + payload_len)
         # MOQT ObjectDatagram
-        buf.push_uint_var(DatagramType.OBJECT_DATAGRAM)   
+        buf.push_uint_var(DatagramType.OBJECT_DATAGRAM)
         buf.push_uint_var(self.track_alias)
         buf.push_uint_var(self.group_id)
         buf.push_uint_var(self.object_id)
@@ -321,7 +321,7 @@ class ObjectDatagram(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buf: Buffer) -> 'ObjectDatagram':
+    def deserialize(cls, buf: Buffer, buf_len: int) -> 'ObjectDatagram':
         track_alias = buf.pull_uint_var()
         group_id = buf.pull_uint_var()
         object_id = buf.pull_uint_var()
@@ -341,7 +341,7 @@ class ObjectDatagram(MOQTMessage):
             logger.info(f"MOQT messages: ObjectDatagram.deserialize: {ext_id}: {ext_value})")
                           
         # Get payload - the rest of the datagram - no length needed
-        payload = buf.pull_bytes(buf.capacity - buf.tell())
+        payload = buf.pull_bytes(buf_len - buf.tell())
 
         return cls(
             track_alias=track_alias,

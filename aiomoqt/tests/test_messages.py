@@ -2,14 +2,11 @@
 import pytest
 from dataclasses import fields
 
-from aioquic.buffer import Buffer
-from aiomoqt.protocol import MOQTSessionProtocol
-from aiomoqt.client import MOQTClientSession
 from aiomoqt.types import *
 from aiomoqt.messages import *
 
 
-def test_message_serialization(cls, params, type_tag = None, needs_len = False):
+def _test_message_serialization(cls, params, type_tag = None, needs_len = False):
     """
     test MOQT message class serialization/deserialization
     
@@ -55,53 +52,53 @@ def test_subgroup_header():
         'subgroup_id': 789,
         'publisher_priority': 10
     }
-    assert test_message_serialization(SubgroupHeader, params, DataStreamType.SUBGROUP_HEADER)
+    assert _test_message_serialization(SubgroupHeader, params, DataStreamType.SUBGROUP_HEADER)
 
 def test_object_header():
     params = {
         'object_id': 1,
-        'extensions': {0: 8, 1: b'\xfa\xce\xb0\x0c'},
+        'extensions': {0: 4207849484, 1: b'\xfa\xce\xb0\x0c'},
         'status': ObjectStatus.NORMAL,
         'payload': b'Hello World'
     }
-    assert test_message_serialization(ObjectHeader, params, needs_len=True)
+    assert _test_message_serialization(ObjectHeader, params, needs_len=True)
 
 def test_fetch_header():
     params = {
         'subscribe_id': 42
     }
-    assert test_message_serialization(FetchHeader, params)
+    assert _test_message_serialization(FetchHeader, params, DataStreamType.FETCH_HEADER)
 
 def test_fetch_object():
     params = {
         'group_id': 1,
         'subgroup_id': 2,
         'object_id': 3,
-        'publisher_priority': 5,
+        'publisher_priority': 56,
         'payload': b'Sample payload'
     }
-    assert test_message_serialization(FetchObject, params, DataStreamType.FETCH_HEADER)
+    assert _test_message_serialization(FetchObject, params)
 
 def test_object_datagram():
     params = {
         'track_alias': 123,
         'group_id': 456,
         'object_id': 789,
-        'publisher_priority': 10,
-        'extensions': {0: 8, 1: b'\xfa\xce\xb0\x0c'},
+        'publisher_priority': 255,
+        'extensions': {0: 4207849484, 1: b'\xfa\xce\xb0\x0c'},
         'payload': b'Hello World'
     }
-    assert test_message_serialization(ObjectDatagram, params, DatagramType.OBJECT_DATAGRAM)
+    assert _test_message_serialization(ObjectDatagram, params, DatagramType.OBJECT_DATAGRAM, needs_len=True)
 
 def test_object_datagram_status():
     params = {
         'track_alias': 123,
         'group_id': 456,
         'object_id': 789,
-        'publisher_priority': 10,
+        'publisher_priority': 0,
         'status': ObjectStatus.DOES_NOT_EXIST
     }
-    assert test_message_serialization(ObjectDatagramStatus, params, DatagramType.OBJECT_DATAGRAM)
+    assert _test_message_serialization(ObjectDatagramStatus, params, DatagramType.OBJECT_DATAGRAM_STATUS)
 
 def test_ObjectHeader():
     data_bytes = b'\xfa\xce\xb0\x0c'
@@ -109,7 +106,7 @@ def test_ObjectHeader():
         object_id = 1,
         status = ObjectStatus.NORMAL,
         extensions = {
-            0: 8,
+            0: 4207849484,
             1: data_bytes,
         },
         payload = b'Hello World'

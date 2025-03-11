@@ -83,8 +83,9 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         
         self._data_streams: Dict[int, int] = {}  # keep track of active data streams
         self._track_aliases: Dict[int, int] = {}  # map alias to subscription_id
-        self._subscriptions: Dict[int, Union[Subscribe, Fetch]] = {}  # map subscription_id to request
+        self._subscriptions: Dict[int, List] = {}  # map subscription_id to request
         self._announce_responses: Dict[int, Future[MOQTMessage]] = {}
+        self._subscribe_announces_responses: Dict[int, Future[MOQTMessage]] = {}
         self._subscribe_responses: Dict[int, Future[MOQTMessage]] = {}
         self._unsubscribe_responses: Dict[int, Future[MOQTMessage]] = {}
         self._fetch_responses: Dict[int, Future[MOQTMessage]] = {}
@@ -357,7 +358,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         # Get stream type from first byte
         dgram_type = buf.pull_uint_var()
         if dgram_type == DatagramType.OBJECT_DATAGRAM:
-            msg = ObjectDatagram.deserialize(buf)
+            msg = ObjectDatagram.deserialize(buf,buf.capacity)
             if msg is None:
                 error = f"datagram parsing failed at: {buf.tell()}"
                 logger.error(f"MOQT error: " + error)
@@ -818,14 +819,14 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
             namespace=namespace_tuple,
             track_name=track_name.encode(),
             priority=priority,
-            direction=group_order,
+            group_order=group_order,
             filter_type=filter_type,
             start_group=start_group,
             start_object=start_object,
             end_group=end_group,
             parameters=parameters
         )
-        self._subscriptions[subscribe_id] = message
+        self._subscriptions[subscribe_id] = [message]
         logger.info(f"MOQT send: {message}")
         self.send_control_message(message.serialize())
 
@@ -1020,7 +1021,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
 
         # Create future for response
         sub_announces_fut = self._loop.create_future()
-        self._subscribe_responses[prefix] = sub_announces_fut
+        self._subscribe_announces_responses[prefix] = sub_announces_fut
 
         async def wait_for_response():
             try:
@@ -1035,7 +1036,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                 )
                 logger.error(f"Timeout waiting for announce subscribe response")
             finally:
-                self._subscribe_responses.pop(prefix, None)
+                self._subscribe_announces_responses.pop(prefix, None)
             
             return response
 
@@ -1132,7 +1133,13 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
     async def _handle_subscribe(self, msg: MOQTMessage) -> None:
         assert isinstance(msg, Subscribe)
         logger.info(f"MOQT receive: {msg}")
-        self.subscribe_ok(msg.subscribe_id)
+        self._track_aliases[msg.track_alias] = msg.subscribe_id
+        self.subscribe_ok(
+            subscribe_id=msg.subscribe_id,
+            expires=0,
+            group_order=GroupOrder.ASCENDING,
+            content_exists=ContentExistsCode.NO_CONTENT,
+        )
 
     async def _handle_announce(self, msg: MOQTMessage) -> None:
         assert isinstance(msg, Announce)
@@ -1151,7 +1158,10 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         future = self._subscribe_responses.get(msg.subscribe_id)
         if future and not future.done():
             future.set_result(msg)
-        self._subscriptions[msg.subscribe_id] = msg
+        if msg.subscribe_id in self._subscriptions:
+            self._subscriptions[msg.subscribe_id].append(msg)
+        else:
+            logger.warning(f"MOQT messages: unsolicited SubscribeOk(msg.subscribe_id)")
 
     async def _handle_subscribe_error(self, msg: MOQTMessage) -> None:
         assert isinstance(msg, SubscribeError)
@@ -1160,7 +1170,11 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         future = self._subscribe_responses.get(msg.subscribe_id)
         if future and not future.done():
             future.set_result(msg)
-
+        if msg.subscribe_id in self._subscriptions:
+            self._subscriptions[msg.subscribe_id].append(msg)
+        else:
+            logger.warning(f"MOQT messages: unsolicited SubscribeError(msg.subscribe_id)")
+            
     async def _handle_announce_ok(self, msg: MOQTMessage) -> None:
         assert isinstance(msg, AnnounceOk)
         logger.info(f"MOQT event: handle {msg}")
@@ -1234,7 +1248,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         assert isinstance(msg, SubscribeAnnouncesOk)
         logger.info(f"MOQT event: handle {msg}")
         # Set future result for subscriber waiting for response
-        future = self._subscribe_responses.get(msg.namespace_prefix)
+        future = self._subscribe_announces_responses.get(msg.namespace_prefix)
         if future and not future.done():
             future.set_result(msg)
         logger.debug(f"_handle_subscribe_announces_ok: {future} {future.done()}")
@@ -1243,7 +1257,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         assert isinstance(msg, SubscribeAnnouncesError)
         logger.info(f"MOQT event: handle {msg}")
         # Set future result for subscriber waiting for response
-        future = self._subscribe_responses.get(msg.namespace_prefix)
+        future = self._subscribe_announces_responses.get(msg.namespace_prefix)
         if future and not future.done():
             future.set_result(msg)
 
@@ -1282,14 +1296,12 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         """Handle subgroup header message."""
         assert isinstance(msg, SubgroupHeader)
         logger.info(f"MOQT event: handle {msg}")
-        # Process subgroup header
-        # Store stream information
+        # Process subgroup header - 
         sub_id = self._track_aliases.get(msg.track_alias)
         if sub_id is not None:
-            req = self._subscriptions[sub_id]
-            #req._groups[(msg.group_id,msg.subgroup_id)] = []
+            sub_state = self._subscriptions[sub_id]
         else:
-            logger.error(f"MOQT error: unrecognized track alias: {msg}")
+            logger.error(f"MOQT error: unrecognized track alias: {msg.track_alias}")
 
     async def _handle_fetch_header(self, msg: FetchHeader) -> None:
         """Handle fetch header message."""

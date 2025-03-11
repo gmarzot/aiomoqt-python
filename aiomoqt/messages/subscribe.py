@@ -144,7 +144,7 @@ class Subscribe(MOQTMessage):
     namespace: Tuple[bytes, ...]
     track_name: bytes
     priority: int
-    direction: int  # Ascending/Descending
+    group_order: int  # Ascending/Descending
     filter_type: int
     start_group: Optional[int] = None
     start_object: Optional[int] = None
@@ -171,7 +171,7 @@ class Subscribe(MOQTMessage):
         payload.push_uint_var(len(self.track_name))
         payload.push_bytes(self.track_name)
         payload.push_uint8(self.priority)
-        payload.push_uint8(self.direction)
+        payload.push_uint8(self.group_order)
         payload.push_uint_var(self.filter_type)
 
         # Add optional start/end fields based on filter type
@@ -214,7 +214,7 @@ class Subscribe(MOQTMessage):
         track_name = buf.pull_bytes(track_name_len)
 
         priority = buf.pull_uint8()
-        direction = buf.pull_uint8()
+        group_order = buf.pull_uint8()
         filter_type = buf.pull_uint_var()
 
         # Handle optional fields based on filter type
@@ -243,7 +243,7 @@ class Subscribe(MOQTMessage):
             namespace=namespace,
             track_name=track_name,
             priority=priority,
-            direction=direction,
+            group_order=group_order,
             filter_type=filter_type,
             start_group=start_group,
             start_object=start_object,
