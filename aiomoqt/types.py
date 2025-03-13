@@ -36,6 +36,8 @@ class ParamType(IntEnum):
     AUTHORIZATION_INFO = 0x02
     DELIVERY_TIMEOUT = 0x03
     MAX_CACHE_DURATION = 0x04
+    GREASE_1_PARAM = 0x25
+    GREASE_2_PARAM = 0x3D
 
 
 class SetupParamType(IntEnum):
@@ -124,6 +126,11 @@ class ForwardingPreference(IntEnum):
     TRACK = 0x0
     SUBGROUP = 0x01
     DATAGRAM = 0x02
+
+
+class FetchType(IntEnum):
+    FETCH = 0x01
+    JOINING_FETCH = 0x02
 
 
 class DataStreamType(IntEnum):

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Dict, Tuple
 from aioquic.buffer import Buffer
 from .base import MOQTMessage, BUF_SIZE
@@ -10,17 +10,19 @@ logger = get_logger(__name__)
 @dataclass
 class Fetch(MOQTMessage):
     """FETCH message to request a range of objects."""
+    fetch_type: int
     subscribe_id: int
-    namespace: Tuple[bytes, ...]
-    track_name: bytes
-    subscriber_priority: int
-    group_order: int
-    start_group: int
-    start_object: int
-    end_group: int
-    end_object: int
-    parameters: Dict[int, bytes]
-    response: Optional['FetchOk']
+    subscriber_priority: int = 128
+    group_order: int = GroupOrder.DESCENDING
+    namespace: Optional[Tuple[bytes, ...]] = None
+    track_name: Optional[bytes] = None
+    start_group: Optional[int] = None
+    start_object: Optional[int] = None
+    end_group: Optional[int] = None
+    end_object: Optional[int] = None
+    joining_sub_id: Optional[int] = None
+    pre_group_offset: Optional[int] = None
+    parameters: Dict[int, bytes] = field(default_factory=dict)
 
     def __post_init__(self):
         self.type = MOQTMessageType.FETCH
@@ -30,25 +32,29 @@ class Fetch(MOQTMessage):
         payload = Buffer(capacity=BUF_SIZE)
 
         payload.push_uint_var(self.subscribe_id)
-
-        # Namespace tuple
-        payload.push_uint_var(len(self.namespace))
-        for part in self.namespace:
-            payload.push_uint_var(len(part))
-            payload.push_bytes(part)
-
-        # Track name
-        payload.push_uint_var(len(self.track_name))
-        payload.push_bytes(self.track_name)
-
         payload.push_uint8(self.subscriber_priority)
         payload.push_uint8(self.group_order)
-        payload.push_uint_var(self.start_group)
-        payload.push_uint_var(self.start_object)
-        payload.push_uint_var(self.end_group)
-        payload.push_uint_var(self.end_object)
+        payload.push_uint_var(self.fetch_type)
+        
+        if self.fetch_type == FetchType.FETCH:
+            payload.push_uint_var(len(self.namespace))
+            for part in self.namespace:
+                payload.push_uint_var(len(part))
+                payload.push_bytes(part)
+                
+            payload.push_uint_var(len(self.track_name))
+            payload.push_bytes(self.track_name)
 
-        # Parameters
+            payload.push_uint_var(self.start_group)
+            payload.push_uint_var(self.start_object)
+            payload.push_uint_var(self.end_group)
+            payload.push_uint_var(self.end_object)
+        elif self.fetch_type == FetchType.JOINING_FETCH:
+            payload.push_uint_var(self.joining_sub_id)
+            payload.push_uint_var(self.pre_group_offset)
+        else:
+            raise RuntimeError
+
         payload.push_uint_var(len(self.parameters))
         for param_id, param_value in self.parameters.items():
             payload.push_uint_var(param_id)
@@ -56,32 +62,47 @@ class Fetch(MOQTMessage):
             payload.push_bytes(param_value)
 
         buf.push_uint_var(self.type)
-        buf.push_uint_var(len(payload.data))
+        buf.push_uint_var(payload.tell())
         buf.push_bytes(payload.data)
         return buf
 
     @classmethod
     def deserialize(cls, buf: Buffer) -> 'Fetch':
+
+        namespace = None
+        track_name = None
+        start_group = None
+        start_object = None
+        end_group = None
+        end_object = None
+        joining_sub_id = None
+        pre_group_offset = None
+
         subscribe_id = buf.pull_uint_var()
-
-        # Namespace tuple
-        tuple_len = buf.pull_uint_var()
-        namespace = []
-        for _ in range(tuple_len):
-            part_len = buf.pull_uint_var()
-            namespace.append(buf.pull_bytes(part_len))
-
-        # Track name
-        track_name_len = buf.pull_uint_var()
-        track_name = buf.pull_bytes(track_name_len)
-
         subscriber_priority = buf.pull_uint8()
         group_order = buf.pull_uint8()
-        start_group = buf.pull_uint_var()
-        start_object = buf.pull_uint_var()
-        end_group = buf.pull_uint_var()
-        end_object = buf.pull_uint_var()
-
+        fetch_type = buf.pull_uint_var()
+        if fetch_type == FetchType.FETCH:
+            # Namespace tuple
+            namespace = []
+            ns_len = buf.pull_uint_var()
+            for _ in range(ns_len):
+                part_len = buf.pull_uint_var()
+                namespace.append(buf.pull_bytes(part_len))
+            namespace = tuple(namespace)
+            # Track name
+            track_name_len = buf.pull_uint_var()
+            track_name = buf.pull_bytes(track_name_len)
+            start_group = buf.pull_uint_var()
+            start_object = buf.pull_uint_var()
+            end_group = buf.pull_uint_var()
+            end_object = buf.pull_uint_var()
+        elif fetch_type == FetchType.JOINING_FETCH:
+            joining_sub_id = buf.pull_uint_var()
+            pre_group_offset = buf.pull_uint_var()
+        else:
+            raise RuntimeError
+        
         # Parameters
         params = {}
         param_count = buf.pull_uint_var()
@@ -92,41 +113,20 @@ class Fetch(MOQTMessage):
             params[param_id] = param_value
 
         return cls(
+            fetch_type=fetch_type,
             subscribe_id=subscribe_id,
-            namespace=tuple(namespace),
-            track_name=track_name,
+            namespace=namespace,
             subscriber_priority=subscriber_priority,
             group_order=group_order,
+            track_name=track_name,
             start_group=start_group,
             start_object=start_object,
             end_group=end_group,
             end_object=end_object,
+            joining_sub_id=joining_sub_id,
+            pre_group_offset=pre_group_offset,
             parameters=params
         )
-
-@dataclass
-class FetchCancel(MOQTMessage):
-    """FETCH_CANCEL message to cancel an ongoing fetch."""
-    subscribe_id: int
-
-    def __post_init__(self):
-        self.type = MOQTMessageType.FETCH_CANCEL
-
-    def serialize(self) -> bytes:
-        buf = Buffer(capacity=BUF_SIZE)
-        payload = Buffer(capacity=BUF_SIZE)
-
-        payload.push_uint_var(self.subscribe_id)
-
-        buf.push_uint_var(self.type)
-        buf.push_uint_var(len(payload.data))
-        buf.push_bytes(payload.data)
-        return buf
-
-    @classmethod
-    def deserialize(cls, buf: Buffer) -> 'FetchCancel':
-        subscribe_id = buf.pull_uint_var()
-        return cls(subscribe_id=subscribe_id)
 
 @dataclass
 class FetchOk(MOQTMessage):
@@ -165,6 +165,7 @@ class FetchOk(MOQTMessage):
 
     @classmethod
     def deserialize(cls, buf: Buffer) -> 'FetchOk':
+
         subscribe_id = buf.pull_uint_var()
         group_order = buf.pull_uint8()
         end_of_track = buf.pull_uint8()
@@ -216,13 +217,40 @@ class FetchError(MOQTMessage):
 
     @classmethod
     def deserialize(cls, buf: Buffer) -> 'FetchError':
+
         subscribe_id = buf.pull_uint_var()
         error_code = buf.pull_uint_var()
         reason_len = buf.pull_uint_var()
         reason = buf.pull_bytes(reason_len).decode()
-        
+
         return cls(
             subscribe_id=subscribe_id,
             error_code=error_code,
             reason=reason
         )
+    
+@dataclass
+class FetchCancel(MOQTMessage):
+    """FETCH_CANCEL message to cancel an ongoing fetch."""
+    subscribe_id: int
+
+    def __post_init__(self):
+        self.type = MOQTMessageType.FETCH_CANCEL
+
+    def serialize(self) -> bytes:
+        buf = Buffer(capacity=BUF_SIZE)
+        payload = Buffer(capacity=BUF_SIZE)
+
+        payload.push_uint_var(self.subscribe_id)
+
+        buf.push_uint_var(self.type)
+        buf.push_uint_var(len(payload.data))
+        buf.push_bytes(payload.data)
+        return buf
+
+    @classmethod
+    def deserialize(cls, buf: Buffer) -> 'FetchCancel':
+
+        subscribe_id = buf.pull_uint_var()
+
+        return cls(subscribe_id=subscribe_id)

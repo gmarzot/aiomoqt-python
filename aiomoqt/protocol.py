@@ -997,6 +997,139 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
             return response
 
         return wait_for_response()
+    
+    def fetch(
+        self,
+        subscribe_id: int,
+        namespace: Union[Tuple[bytes,...]|List[Union[bytes,str]]|str],
+        track_name: Union[bytes|str],
+        subscriber_priority: int = 128,
+        group_order: GroupOrder = GroupOrder.ASCENDING,
+        start_group: Optional[int] = 0,
+        start_object: Optional[int] = 0,
+        end_group: Optional[int] = 0,
+        end_object: Optional[int] = 0,
+        parameters: Optional[Dict[int, bytes]] = None,
+        wait_response: Optional[bool] = False,
+    ) -> None:
+        """Subscribe to a track with configurable options."""
+        if parameters is None:
+            parameters = {}
+        subscribe_id = self._allocate_subscribe_id() if subscribe_id is None else subscribe_id
+        track_alias = self._allocate_track_alias(subscribe_id) if track_alias is None else track_alias
+        namespace = self._make_namespace_tuple(namespace)
+        if isinstance(track_name, str):
+            track_name = track_name.encode()
+        message = Fetch(
+            subscribe_id=subscribe_id,
+            track_alias=track_alias,
+            namespace=namespace,
+            track_name=track_name,
+            priority=subscriber_priority,
+            fetch_type=FetchType.FETCH,
+            group_order=group_order,
+            start_group=start_group,
+            start_object=start_object,
+            end_group=end_group,
+            end_object=end_object,
+            parameters=parameters
+        )
+        
+        self._subscriptions[subscribe_id] = [message]
+        logger.info(f"MOQT send: {message}")
+        self.send_control_message(message.serialize())
+
+        if not wait_response:
+            return message
+
+        # Create future for response
+        subscribe_fut = self._loop.create_future()
+        self._subscribe_responses[subscribe_id] = subscribe_fut
+
+        async def wait_for_response():
+            try:
+                async with asyncio.timeout(10):
+                    response = await subscribe_fut
+            except asyncio.TimeoutError:
+                # Create synthetic error response
+                response = SubscribeError(
+                    subscribe_id=subscribe_id,
+                    error_code=0x5,  # TIMEOUT error code
+                    reason="Subscribe Response Timeout",
+                    track_alias=0
+                )
+                logger.error(f"Timeout waiting for subscribe response")
+            finally:
+                logger.debug(f"MOQT: removing subscribe response future: {subscribe_id}")
+                self._subscribe_responses.pop(subscribe_id, None)    
+            return response
+
+        return wait_for_response()
+
+    def join(
+        self,
+        subscribe_id: int,
+        namespace: Union[Tuple[bytes,...]|List[Union[bytes,str]]|str],
+        track_name: Union[bytes|str],
+        subscriber_priority: int = 128,
+        group_order: GroupOrder = GroupOrder.ASCENDING,
+        joining_sub_id: Optional[int] = 0,
+        pre_group_offset: Optional[int] = 0,
+        parameters: Optional[Dict[int, bytes]] = None,
+        wait_response: Optional[bool] = False,
+    ) -> None:
+        """Subscribe to a track with configurable options."""
+        if parameters is None:
+            parameters = {}
+        subscribe_id = self._allocate_subscribe_id() if subscribe_id is None else subscribe_id
+        track_alias = self._allocate_track_alias(subscribe_id) if track_alias is None else track_alias
+        namespace = self._make_namespace_tuple(namespace)
+        if isinstance(track_name, str):
+            track_name = track_name.encode()
+        message = Fetch(
+            subscribe_id=subscribe_id,
+            track_alias=track_alias,
+            namespace=namespace,
+            track_name=track_name,
+            priority=subscriber_priority,
+            group_order=group_order,
+            fetch_type=FetchType.JOINING_FETCH,
+            joining_sub_id=joining_sub_id,
+            pre_group_offset=pre_group_offset,
+            parameters=parameters
+        )
+        
+        self._subscriptions[subscribe_id] = [message]
+        logger.info(f"MOQT send: {message}")
+        self.send_control_message(message.serialize())
+
+        if not wait_response:
+            return message
+
+        # Create future for response
+        subscribe_fut = self._loop.create_future()
+        self._subscribe_responses[subscribe_id] = subscribe_fut
+
+        async def wait_for_response():
+            try:
+                async with asyncio.timeout(10):
+                    response = await subscribe_fut
+            except asyncio.TimeoutError:
+                # Create synthetic error response
+                response = SubscribeError(
+                    subscribe_id=subscribe_id,
+                    error_code=0x5,  # TIMEOUT error code
+                    reason="Subscribe Response Timeout",
+                    track_alias=0
+                )
+                logger.error(f"Timeout waiting for subscribe response")
+            finally:
+                logger.debug(f"MOQT: removing subscribe response future: {subscribe_id}")
+                self._subscribe_responses.pop(subscribe_id, None)    
+            return response
+
+        return wait_for_response()
+
 
     def subscribe_announces(
         self,

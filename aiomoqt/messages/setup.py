@@ -28,29 +28,35 @@ class ServerSetup(MOQTMessage):
         payload.push_uint_var(len(self.parameters))
         for param_id, param_value in self.parameters.items():
             payload.push_uint_var(param_id)
+            if isinstance(param_value, int):
+                param_value = MOQTMessage._varint_encode(param_value)
             payload.push_uint_var(len(param_value))
             payload.push_bytes(param_value)
 
         # Build final message
         buf.push_uint_var(self.type)  # SERVER_SETUP type
-        buf.push_uint_var(len(payload.data))
+        buf.push_uint_var(payload.tell())
         buf.push_bytes(payload.data)
         return buf
 
     @classmethod
-    def deserialize(cls, buffer: Buffer) -> 'ServerSetup':
+    def deserialize(cls, buf: Buffer) -> 'ServerSetup':
         """Handle SERVER_SETUP message."""
-        version = buffer.pull_uint_var()
-        param_count = buffer.pull_uint_var()
+
+        version = buf.pull_uint_var()
 
         params = {}
+        param_count = buf.pull_uint_var()
         for _ in range(param_count):
-            param_id = buffer.pull_uint_var()
-            param_len = buffer.pull_uint_var()
-            param_value = buffer.pull_bytes(param_len)
+            param_id = buf.pull_uint_var()
+            param_len = buf.pull_uint_var()
+            param_value = buf.pull_bytes(param_len)
+            if (param_id == SetupParamType.MAX_SUBSCRIBER_ID):
+                param_value = Buffer(data=param_value).pull_uint_var()
             params[param_id] = param_value
+
+
         return cls(selected_version=version, parameters=params)
-        # self.protocol._moqt_session.set()
 
 
 @dataclass
@@ -75,6 +81,8 @@ class ClientSetup(MOQTMessage):
         payload.push_uint_var(len(self.parameters))
         for param_id, param_value in self.parameters.items():
             payload.push_uint_var(param_id)
+            if isinstance(param_value, int):
+                param_value = MOQTMessage._varint_encode(param_value)
             payload.push_uint_var(len(param_value))
             payload.push_bytes(param_value)
 
@@ -85,38 +93,32 @@ class ClientSetup(MOQTMessage):
         return buf
 
     @classmethod
-    def deserialize(cls, buf: Buffer) -> None:
+    def deserialize(cls, buf: Buffer) -> 'ClientSetup':
         """Handle CLIENT_SETUP message."""
         logger.info(f"CLIENT_SETUP: {buf.data.hex()} ")
+                
         versions = []
         version_count = buf.pull_uint_var()
         for _ in range(version_count):
             versions.append(buf.pull_uint_var())
 
         param_count = buf.pull_uint_var()
-
-        logger.info(
-            f"CLIENT_SETUP: version: {versions} params: {param_count} ")
+        logger.info(f"CLIENT_SETUP: version: {versions} params: {param_count} ")
         params = {}
         for _ in range(param_count):
             param_id = buf.pull_uint_var()
             param_len = buf.pull_uint_var()
             param_value = buf.pull_bytes(param_len)
             if (param_id == SetupParamType.MAX_SUBSCRIBER_ID):
-                id = "MAX_SUBSCRIBER_ID"
                 param_value = Buffer(data=param_value).pull_uint_var()
-            elif (param_id == SetupParamType.CLIENT_ROLE):
-                id = "CLIENT_ROLE"
-            elif (param_id == SetupParamType.ENDPOINT_PATH):
-                id = "ENDPOINT_PATH"
+            if param_id in [SetupParamType.MAX_SUBSCRIBER_ID, SetupParamType.ENDPOINT_PATH]:
+                id = SetupParamType(param_id).name
             else:
-                id = "UNKNOWN"
-                logger.error(
-                    f"_handle_server_setup: received unknown setup param type: {hex(param_id)}")
-            params[param_id] = param_value
-            logger.debug(
-                f"  param: id: {id} ({hex(param_id)}) len: {param_len} val: {param_value}")
+                id = f"0x{param_value.hex()}"
 
+            logger.info(f"  {id}: {param_value}")
+            params[param_id] = param_value
+            
         return cls(versions=versions, parameters=params)
         
 
@@ -138,12 +140,14 @@ class GoAway(MOQTMessage):
         # Write message
         buf.push_uint_var(self.type)
         buf.push_uint_var(payload.tell())
-        buf.push_bytes(uri_bytes)
+        buf.push_bytes(payload.data)
 
         return buf
 
     @classmethod
     def deserialize(cls, buf: Buffer) -> 'GoAway':
+
         uri_len = buf.pull_uint_var()
         uri = buf.pull_bytes(uri_len).decode()
+
         return cls(new_session_uri=uri)

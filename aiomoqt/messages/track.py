@@ -300,6 +300,7 @@ class ObjectDatagram(MOQTMessage):
         buf.push_uint_var(self.object_id)
         buf.push_uint8(self.publisher_priority)
         pos = buf.tell()
+        
         extensions = self.extensions or {}
         ext_len = len(extensions)
         buf.push_uint_var(ext_len)
@@ -310,11 +311,12 @@ class ObjectDatagram(MOQTMessage):
             else:
                 if isinstance(ext_value, str):
                     ext_value = ext_value.encode()
+                assert isinstance(ext_value, bytes)
                 buf.push_uint_var(len(ext_value))
                 buf.push_bytes(ext_value)
                 
         if buf.tell() > pos:
-            logger.info(f"MOQT messages: ObjectDatagram.serialize: 0x{buf.data_slice(pos,buf.tell()).hex()}")      
+            logger.info(f"MOQT messages: ObjectDatagram.serialize: 0x{buf.data_slice(pos,buf.tell()).hex()}... {buf.tell()} bytes")      
             
         if payload_len > 0:
             buf.push_bytes(self.payload)
@@ -365,14 +367,15 @@ class ObjectDatagramStatus(MOQTMessage):
     def __post_init__(self):
         self.type = DatagramType.OBJECT_DATAGRAM_STATUS
 
-    def serialize(self, buf: Buffer = None) -> Buffer:
-        buf = Buffer(capacity=BUF_SIZE) if buf is None else buf
-        # buf.push_uint_var(0)
+    def serialize(self) -> Buffer:
+        buf = Buffer(capacity=BUF_SIZE)
+
         buf.push_uint_var(DatagramType.OBJECT_DATAGRAM_STATUS)   
         buf.push_uint_var(self.track_alias)
         buf.push_uint_var(self.group_id)
         buf.push_uint_var(self.object_id)
         buf.push_uint8(self.publisher_priority)
+        
         extensions = self.extensions or {}
         ext_len = len(extensions)
         buf.push_uint_var(ext_len)
@@ -383,6 +386,7 @@ class ObjectDatagramStatus(MOQTMessage):
             else:
                 if isinstance(ext_value, str):
                     ext_value = ext_value.encode()
+                assert isinstance(ext_value, bytes)
                 buf.push_uint_var(len(ext_value))
                 buf.push_bytes(ext_value)
         

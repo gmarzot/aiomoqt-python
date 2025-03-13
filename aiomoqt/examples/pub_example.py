@@ -30,6 +30,7 @@ GROUP_SIZE = 30
 async def dgram_subscribe_data_generator(session: MOQTSessionProtocol, msg: Subscribe) -> None:
     """Wrapper for subscribe handler - spawns stream generators after standard handler"""
     session.default_message_handler(msg.type, msg)  
+    logger.debug(f"dgram_subscribe_data_generator: track_alias: {msg.track_alias}")
     # Base layer 
     task = asyncio.create_task(
         generate_group_dgram(
@@ -102,13 +103,12 @@ async def generate_group_dgram(session: MOQTSessionProtocol, track_alias: int, p
                             37: f"MOQT-TS: {int(time.time()*1000)}"
                         }
                     )
-                    msg = Buffer(capacity=BUF_SIZE)
-                    msg.push_uint_var(0)  # H3 dgram starts with quarter stream id
-                    msg = obj.serialize(msg)
+
+                    msg = obj.serialize()
                     if session._close_err is not None:
                         logger.error(f"MOQT app: session closed with error: {session._close_err}")
                         raise MOQTException(*session._close_err)
-                    logger.debug(f"MOQT app: sending: ObjectDatagramStatus: id:{group_id-1}.{object_id} status: END_OF_GROUP")
+                    logger.debug(f"MOQT app: sending: ObjectDatagramStatus: id:{group_id-1}.{object_id} alias: {obj.track_alias} status: END_OF_GROUP")
                     if session._close_err is not None:
                         raise asyncio.CancelledError
                     session._quic.send_datagram_frame(b'\0' + msg.data)
@@ -148,7 +148,7 @@ async def generate_group_dgram(session: MOQTSessionProtocol, track_alias: int, p
                 raise RuntimeError()
             msg = obj.serialize()
             msg_len = len(msg.data)
-            logger.debug(f"MOQT app: sending: ObjectDatagram: id: {group_id}.{object_id} size: {msg_len} {msg.tell()} bytes")
+            logger.debug(f"MOQT app: sending: ObjectDatagram: id: {group_id}.{object_id} alias: {obj.track_alias} size: {msg_len} {msg.tell()} bytes")
             if session._close_err is not None:
                 raise asyncio.CancelledError
 

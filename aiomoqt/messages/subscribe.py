@@ -369,7 +369,7 @@ class SubscribesBlocked(MOQTMessage):
         self.type = MOQTMessageType.SUBSCRIBES_BLOCKED
 
     def serialize(self) -> bytes:
-        buf = Buffer(capacity=16)
+        buf = Buffer(capacity=BUF_SIZE)
 
         payload_size = 1  # maximum_subscribe_id varint
 

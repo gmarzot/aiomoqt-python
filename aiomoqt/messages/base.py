@@ -66,13 +66,11 @@ class MOQTMessage:
                 enum = SetupParamType if class_name(self).endswith('Setup') else ParamType
                 for k, v in value.items():
                     param_name = enum(k).name  # Convert enum value to name
-                    try:
-                        # Try to decode value as varint
-                        param_value = v if isinstance(v, int) else self._varint_decode(v)
-                        items.append(f"{param_name}={param_value}")
-                    except:
-                        # Fall back to hex for non-varint values
+                    if isinstance(v, int):
+                        items.append(f"{param_name}={v}")
+                    else:
                         items.append(f"{param_name}=0x{v.hex()}")
+
                 str_val = "{" + ", ".join(items) + "}"
             elif isinstance(value, bytes):
                 try:
