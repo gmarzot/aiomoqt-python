@@ -6,7 +6,7 @@
 
 This package implements the [MoQT Specification](https://moq-wg.github.io/moq-transport/draft-ietf-moq-transport.html) (currently **draft-10**). It is desinged for general use as an MoQT client and server library, supporting both 'publish' and 'subscribe' roles.
 
-The architecture follows the [asyncio.Protocol](https://pypi.org/project/asyncio/) design pattern, and extends the [aioquic.asyncio.protocol.QuicConnectionProtocol](https://pypi.org/project/aioquic/) protocol.
+The architecture follows the [asyncio.Protocol](https://pypi.org/project/asyncio/) design pattern, and extends the [aioquic QuicConnectionProtocol](https://pypi.org/project/aioquic/) protocol.
 
 ### Featurtes
 
