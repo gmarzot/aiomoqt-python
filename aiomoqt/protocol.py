@@ -3,7 +3,7 @@ import time
 
 import contextvars
 from functools import partial
-from collections import defaultdict 
+from collections import defaultdict
 from typing import Optional, Type, Union, List, Set, Tuple, Dict, DefaultDict, Callable
 
 import asyncio

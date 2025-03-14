@@ -283,13 +283,7 @@ class ObjectDatagram(MOQTMessage):
         buf.push_uint_var(self.group_id)
         buf.push_uint_var(self.object_id)
         buf.push_uint8(self.publisher_priority)
-        pos = buf.tell()
-        
         MOQTMessage._extensions_encode(buf, self.extensions)
-                
-        if buf.tell() > pos:
-            logger.info(f"MOQT messages: ObjectDatagram.serialize: 0x{buf.data_slice(pos,buf.tell()).hex()}... {buf.tell()} bytes")      
-            
         if payload_len > 0:
             buf.push_bytes(self.payload)
         return buf
