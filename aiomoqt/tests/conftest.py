@@ -1,9 +1,8 @@
 from dataclasses import fields
+from aiomoqt.messages import MOQTMessageType
+from aiomoqt.context import set_moqt_ctx_version
 
-from aioquic.buffer import Buffer
-
-from aiomoqt.types import MOQTMessageType
-
+set_moqt_ctx_version()
 
 def moqt_test_id(case):
     """
@@ -56,7 +55,7 @@ def moqt_message_serialization(cls, params, type_id=None, needs_len=False):
     for field in fields(cls):            
         original_value = getattr(obj, field.name)
         new_value = getattr(new_obj, field.name)
-        print(f"moqt_message_serialization: origninal: {original_value}  new: {new_value}")
+        print(f"moqt_message_serialization: original: {original_value}  new: {new_value}")
         if isinstance(original_value, dict):
             assert original_value.keys() == new_value.keys(), f"`{field.name}` keys don't match"
             for key in original_value:

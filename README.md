@@ -4,15 +4,14 @@
 
 ## Overview
 
-This package implements the [MoQT Specification](https://moq-wg.github.io/moq-transport/draft-ietf-moq-transport.html) (currently **draft-08**). It is desinged for general use as an MoQT client and server library. The architecture is
-based on [asyncio](https://pypi.org/project/asyncio/), and extends the [aioquic](https://pypi.org/project/aioquic/) protocol. Currently most MoQT control messages are parsed and serialized. 
+This package implements the [MoQT Specification](https://moq-wg.github.io/moq-transport/draft-ietf-moq-transport.html) (currently **draft-08**). It is desinged for general use as an MoQT client and server library, supporting both 'publish' and 'subscribe'. The architecture is based on [asyncio](https://pypi.org/project/asyncio/), and extends the [aioquic](https://pypi.org/project/aioquic/) protocol.
 
 ### Featurtes
 
-- Serialization and deserialization of messages and data streams.
-- A session protocol class with MoQT message registry.
-- An extensible API allowing custom handlers for responses and incoming messages.
-- Support for both asynchronous and synchronous calls using the `wait_response` flag.
+- Async Context Manager support for session connection management.
+- High-level API for control messages with default and custom response handlers.
+- Support for asynchronous and synchronous calls using the `wait_response` flag.
+- Low-level API for control and data message serialization and deserialization.
 
 🚀 **Status:** Alpha
 
@@ -56,6 +55,8 @@ from aiomoqt.client import MOQTClientSession
 asyncio.run(main())
 ```
 
+For the control message API, those messages which require a response will support the asyncio 'await' call construct. These message API's may also be called non-blocking/asynchronously and the response will be handled by the default handler. (note: in the future they support a call-back completion function). The message serialization/deseriliation classes provide <moqt-msg-obj>.serialize() which returns an 'aioquic' Buffer with the entire message serialized in buf.data and buf.tell() at the end of the buffer. The buffer data may passed directly to send_control_message(). The <moqt-msg-class>.deserialize() call returns an instance of the given class populated from the deserialized data. These calls expect that for messages that start with a type and length, will already have had the type and length parsed/pulled provided 'aioquic' buffer.
+
 #### see aiomoqt-python/aiomoqt/examples for additional examples
 
 ## Development
@@ -76,13 +77,12 @@ uv pip install .
 
 ## TODO
 
-* Datagram Object Data
 * FETCH/OK, Joining FETCH/OK, 
 * Direct QUIC connection
 * GOAWAY, SUBSCRIBE_UPDATE, ANNOUNCE (beyond the basic), etc.
 * Move track data read/write API to aiomoqt.messages.track
 * Support file I/O [MOQT File Format](https://datatracker.ietf.org/doc/html/draft-jennings-moq-file-00)
-* Real tests
+* More tests
 
 ## Contributing
 

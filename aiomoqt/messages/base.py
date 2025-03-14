@@ -1,8 +1,11 @@
-from typing import Any
+from typing import Any, Union, Dict
 from dataclasses import dataclass, fields
+
 from aioquic.buffer import Buffer
+
 from ..types import *
 from ..utils.logger import *
+from ..context import get_moqt_ctx_version, get_major_version
 
 logger = get_logger(__name__)
 
@@ -20,6 +23,81 @@ class MOQTMessage:
     """Base class for all MOQT messages."""
     # type: Optional[int] = None - let subclass set it - annoying warnings
 
+    @staticmethod
+    def _extensions_encode(buf: Buffer, exts: Dict) -> None:
+        vers = get_moqt_ctx_version()
+        major_version = get_major_version(vers)
+        if exts is None or len(exts) == 0:
+            buf.push_uint_var(0)
+            return
+        
+        if major_version > 8:
+            pos = buf.tell()
+            payload = Buffer(capacity=BUF_SIZE)
+            for ext_id, ext_value in exts.items():
+                payload.push_uint_var(ext_id)
+                if ext_id % 2 == 0:  # even extension types are simple var int
+                    payload.push_uint_var(ext_value)
+                else:
+                    if isinstance(ext_value, str):
+                        ext_value = ext_value.encode()
+                    assert isinstance(ext_value, bytes)
+                    payload.push_uint_var(len(ext_value))
+                    payload.push_bytes(ext_value)
+
+            exts_len = payload.tell()
+            buf.push_uint_var(exts_len)
+            buf.push_bytes(payload.data)
+        else:
+            buf.push_uint_var(len(exts))
+            for ext_id, ext_value in exts.items():
+                buf.push_uint_var(ext_id)
+                if ext_id % 2 == 0:
+                    buf.push_uint_var(ext_value)
+                else:
+                    if isinstance(ext_value, str):
+                        ext_value = ext_value.encode()
+                    assert isinstance(ext_value, bytes)
+                    buf.push_uint_var(len(ext_value))
+                    buf.push_bytes(ext_value)
+
+
+    @staticmethod
+    def _extensions_decode(buf: Buffer) -> Dict[int, Union[int, bytes]]:
+        exts = None
+        vers = get_moqt_ctx_version()
+        major_version = get_major_version(vers)
+        if major_version > 8:
+            exts_len = buf.pull_uint_var()
+            if exts_len > 0:
+                exts = {}
+                pos = buf.tell()
+                exts_end = pos + exts_len
+                while buf.tell() < exts_end:
+                    ext_id = buf.pull_uint_var()
+                    if ext_id % 2 == 0:  # even extension types are simple var int
+                        ext_value = buf.pull_uint_var()
+                    else:
+                        value_len = buf.pull_uint_var()
+                        ext_value = buf.pull_bytes(value_len)
+                    exts[ext_id] = ext_value
+
+                assert buf.tell() == exts_end, f"Payload length mismatch: {exts_len} {buf.tell()-pos}"
+        else:
+            exts_len = buf.pull_uint_var()
+            if exts_len > 0:
+                exts = {}
+                for _ in range(exts_len):
+                    ext_id = buf.pull_uint_var()
+                    if ext_id % 2 == 0:  # even extension types are simple var int
+                        ext_value = buf.pull_uint_var()
+                    else:
+                        value_len = buf.pull_uint_var()
+                        ext_value = buf.pull_bytes(value_len)
+                    exts[ext_id] = ext_value
+
+        return exts
+          
     @staticmethod
     def _bytes_encode(value: Any) -> bytes:
         if isinstance(value, int):
@@ -39,13 +117,13 @@ class MOQTMessage:
         buf = Buffer(data=data)
         return buf.pull_uint_var()
 
-    def serialize(self) -> bytes:
-        """Convert message to complete wire format."""
-        raise NotImplementedError()
-
     @classmethod
     def deserialize(cls, buf: Buffer) -> 'MOQTMessage':
         """Create message from buf containing payload."""
+        raise NotImplementedError()
+
+    def serialize(self) -> bytes:
+        """Convert message to complete wire format."""
         raise NotImplementedError()
 
     def __str__(self) -> str:

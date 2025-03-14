@@ -1,9 +1,11 @@
 from dataclasses import dataclass
 from typing import Optional, Dict, Tuple, Union
+
 from aioquic.buffer import Buffer, BufferReadError
+
 from .base import MOQTUnderflow, MOQTMessage, BUF_SIZE
-from ..utils.logger import get_logger
 from ..types import ObjectStatus, DataStreamType, ForwardingPreference, DatagramType
+from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -111,18 +113,8 @@ class ObjectHeader:
         buf = Buffer(capacity=(BUF_SIZE + payload_len))
 
         buf.push_uint_var(self.object_id)
-        extensions = self.extensions or {}
-        ext_len = len(extensions)
-        buf.push_uint_var(ext_len)
-        for ext_id, ext_value in extensions.items():
-            buf.push_uint_var(ext_id)
-            if (ext_id % 2) == 0:  # even extension types are simple var int
-                buf.push_uint_var(ext_value)
-            else:
-                if isinstance(ext_value, str):
-                    ext_value = ext_value.encode()
-                buf.push_uint_var(len(ext_value))
-                buf.push_bytes(ext_value)
+
+        MOQTMessage._extensions_encode(buf, self.extensions)
 
         if self.status == ObjectStatus.NORMAL and self.payload:
             buf.push_uint_var(payload_len)
@@ -137,18 +129,10 @@ class ObjectHeader:
     def deserialize(cls, buf: Buffer, buf_len: int) -> 'ObjectHeader':
         """Deserialize from stream transmission."""
         object_id = buf.pull_uint_var()
+
         # Parse extensions
-        extensions = {}
-        ext_count = buf.pull_uint_var()
-        for _ in range(ext_count):
-            ext_id = buf.pull_uint_var()
-            if (ext_id % 2) == 0:  # even extension types are simple var int
-                ext_value = buf.pull_uint_var()
-                extensions[ext_id] = ext_value
-            else:
-                ext_value_len = buf.pull_uint_var()
-                ext_value = buf.pull_bytes(ext_value_len)
-                extensions[ext_id] = ext_value
+        extensions = MOQTMessage._extensions_decode(buf)
+
         # Get payload or status
         payload_len = buf.pull_uint_var()
         pos = buf.tell()
@@ -301,19 +285,7 @@ class ObjectDatagram(MOQTMessage):
         buf.push_uint8(self.publisher_priority)
         pos = buf.tell()
         
-        extensions = self.extensions or {}
-        ext_len = len(extensions)
-        buf.push_uint_var(ext_len)
-        for ext_id, ext_value in extensions.items():
-            buf.push_uint_var(ext_id)
-            if ext_id % 2 == 0:  # even extension types are simple var int
-                buf.push_uint_var(ext_value)
-            else:
-                if isinstance(ext_value, str):
-                    ext_value = ext_value.encode()
-                assert isinstance(ext_value, bytes)
-                buf.push_uint_var(len(ext_value))
-                buf.push_bytes(ext_value)
+        MOQTMessage._extensions_encode(buf, self.extensions)
                 
         if buf.tell() > pos:
             logger.info(f"MOQT messages: ObjectDatagram.serialize: 0x{buf.data_slice(pos,buf.tell()).hex()}... {buf.tell()} bytes")      
@@ -329,18 +301,8 @@ class ObjectDatagram(MOQTMessage):
         object_id = buf.pull_uint_var()
         publisher_priority = buf.pull_uint8()
         
-        extensions = {}
-        ext_count = buf.pull_uint_var()
-        for _ in range(ext_count):
-            ext_id = buf.pull_uint_var()
-            if ext_id % 2 == 0:  # even extension types are simple var int
-                ext_value = buf.pull_uint_var()
-                extensions[ext_id] = ext_value
-            else:
-                ext_value_len = buf.pull_uint_var()
-                ext_value = buf.pull_bytes(ext_value_len)
-                extensions[ext_id] = ext_value
-            logger.info(f"MOQT messages: ObjectDatagram.deserialize: {ext_id}: {ext_value})")
+        # Parse extensions
+        extensions = MOQTMessage._extensions_decode(buf)
                           
         # Get payload - the rest of the datagram - no length needed
         payload = buf.pull_bytes(buf_len - buf.tell())
@@ -376,19 +338,7 @@ class ObjectDatagramStatus(MOQTMessage):
         buf.push_uint_var(self.object_id)
         buf.push_uint8(self.publisher_priority)
         
-        extensions = self.extensions or {}
-        ext_len = len(extensions)
-        buf.push_uint_var(ext_len)
-        for ext_id, ext_value in extensions.items():
-            buf.push_uint_var(ext_id)
-            if ext_id % 2 == 0:  # even extension types are simple var int
-                buf.push_uint_var(ext_value)
-            else:
-                if isinstance(ext_value, str):
-                    ext_value = ext_value.encode()
-                assert isinstance(ext_value, bytes)
-                buf.push_uint_var(len(ext_value))
-                buf.push_bytes(ext_value)
+        MOQTMessage._extensions_encode(buf, self.extensions)
         
         buf.push_uint_var(self.status)  # Status code
 
@@ -400,23 +350,17 @@ class ObjectDatagramStatus(MOQTMessage):
         group_id = buf.pull_uint_var()
         object_id = buf.pull_uint_var()
         publisher_priority = buf.pull_uint8()
-        extensions = {}
-        ext_count = buf.pull_uint_var()
-        for _ in range(ext_count):
-            ext_id = buf.pull_uint_var()
-            if ext_id % 2 == 0:  # even extension types are simple var int
-                ext_value = buf.pull_uint_var()
-                extensions[ext_id] = ext_value
-            else:
-                ext_value_len = buf.pull_uint_var()
-                ext_value = buf.pull_bytes(ext_value_len)
-                extensions[ext_id] = ext_value     
+
+        # Parse extensions
+        extensions = MOQTMessage._extensions_decode(buf)
+
         status = ObjectStatus(buf.pull_uint_var())
         return cls(
             track_alias=track_alias,
             group_id=group_id,
             object_id=object_id,
             publisher_priority=publisher_priority,
+            extensions=extensions,
             status=status
         )
 

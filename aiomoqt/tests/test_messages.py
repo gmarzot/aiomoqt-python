@@ -2,7 +2,6 @@
 import pytest
 from conftest import moqt_message_serialization, moqt_test_id
 
-from aioquic.buffer import Buffer
 from aiomoqt.types import *
 from aiomoqt.messages import *
 
@@ -536,5 +535,9 @@ def test_ObjectHeader():
     
     assert obj.object_id == new_obj.object_id
     assert obj.status == new_obj.status
-    assert len(obj.extensions) == len(new_obj.extensions)
+    if obj.extensions is None:
+        assert new_obj.extensions is None
+    else:
+        assert len(obj.extensions) == len(new_obj.extensions)
+        
     assert len(obj.payload) == len(new_obj.payload)

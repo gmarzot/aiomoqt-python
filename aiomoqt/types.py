@@ -1,6 +1,10 @@
 from enum import IntEnum
 
 
+MOQT_VERSIONS = [0xff000008, 0xff080000, 0xff000009, 0xff090000, 0xff00000a, 0xff0a0000]
+MOQT_CUR_VERSION = 0xff000008
+
+
 class MOQTMessageType(IntEnum):
     """MOQT message type constants."""
     CLIENT_SETUP = 0x40
@@ -98,8 +102,6 @@ class TrackStatusCode(IntEnum):
 
 class FilterType(IntEnum):
     """Subscription filter types."""
-    LATEST_GROUP = 0x01
-    RECENT_GROUP = 0x01
     LATEST_OBJECT = 0x02
     ABSOLUTE_START = 0x03
     ABSOLUTE_RANGE = 0x04
