@@ -27,6 +27,7 @@ class MOQTMessage:
     def _extensions_encode(buf: Buffer, exts: Dict) -> None:
         vers = get_moqt_ctx_version()
         major_version = get_major_version(vers)
+        logger.debug(f"MOQTMessage._extensions_encode(): {vers} maj: {major_version}")
         if exts is None or len(exts) == 0:
             buf.push_uint_var(0)
             return
@@ -67,6 +68,7 @@ class MOQTMessage:
         exts = None
         vers = get_moqt_ctx_version()
         major_version = get_major_version(vers)
+        logger.debug(f"MOQTMessage._extensions_decode(): {vers} maj: {major_version}")
         if major_version > 8:
             exts_len = buf.pull_uint_var()
             if exts_len > 0:
@@ -81,7 +83,7 @@ class MOQTMessage:
                         value_len = buf.pull_uint_var()
                         ext_value = buf.pull_bytes(value_len)
                     exts[ext_id] = ext_value
-
+                logger.info(f"MOQT messages: decoding extensions: version: {major_version} {exts}")
                 assert buf.tell() == exts_end, f"Payload length mismatch: {exts_len} {buf.tell()-pos}"
         else:
             exts_len = buf.pull_uint_var()

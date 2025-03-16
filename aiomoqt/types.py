@@ -2,7 +2,7 @@ from enum import IntEnum
 
 
 MOQT_VERSIONS = [0xff000008, 0xff080000, 0xff000009, 0xff090000, 0xff00000a, 0xff0a0000]
-MOQT_CUR_VERSION = 0xff000008
+MOQT_CUR_VERSION = 0xff00000a
 
 
 class MOQTMessageType(IntEnum):
@@ -48,7 +48,7 @@ class SetupParamType(IntEnum):
     """Setup Parameter type constants"""
     CLIENT_ROLE = 0x0  # deprecated - removed in draft-8
     ENDPOINT_PATH = 0x01  # only relevant to raw QUIC connection
-    MAX_SUBSCRIBER_ID = 0x02
+    MAX_SUBSCRIBER_ID = 0x02  # currently encoded as varint in draft0-10 - this will change
 
 
 class SessionCloseCode(IntEnum):

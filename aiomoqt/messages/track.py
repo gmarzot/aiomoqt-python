@@ -212,6 +212,7 @@ class FetchObject:
     subgroup_id: int 
     object_id: int
     publisher_priority: int
+    extensions: Dict[int, bytes]
     status: ObjectStatus = ObjectStatus.NORMAL
     payload: bytes = b''
 
@@ -223,7 +224,9 @@ class FetchObject:
         buf.push_uint_var(self.object_id)
         buf.push_uint8(self.publisher_priority)
 
-        if self.status == ObjectStatus.NORMAL:
+        MOQTMessage._extensions_encode(buf, self.extensions)
+
+        if self.status == ObjectStatus.NORMAL and len(self.payload) > 0:
             buf.push_uint_var(len(self.payload))
             buf.push_bytes(self.payload)
         else:
@@ -238,6 +241,9 @@ class FetchObject:
         subgroup_id = buf.pull_uint_var()
         object_id = buf.pull_uint_var()
         publisher_priority = buf.pull_uint8()
+        
+        # Parse extensions
+        extensions = MOQTMessage._extensions_decode(buf)
         payload_len = buf.pull_uint_var()
 
         if payload_len == 0:
@@ -256,6 +262,7 @@ class FetchObject:
             subgroup_id=subgroup_id,
             object_id=object_id,
             publisher_priority=publisher_priority,
+            extensions=extensions,
             status=status,
             payload=payload
         )

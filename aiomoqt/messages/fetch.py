@@ -58,6 +58,7 @@ class Fetch(MOQTMessage):
         payload.push_uint_var(len(self.parameters))
         for param_id, param_value in self.parameters.items():
             payload.push_uint_var(param_id)
+            param_value = MOQTMessage._bytes_encode(param_value)
             payload.push_uint_var(len(param_value))
             payload.push_bytes(param_value)
 
@@ -155,6 +156,7 @@ class FetchOk(MOQTMessage):
         payload.push_uint_var(len(self.parameters))
         for param_id, param_value in self.parameters.items():
             payload.push_uint_var(param_id)
+            param_value = MOQTMessage._bytes_encode(param_value)
             payload.push_uint_var(len(param_value))
             payload.push_bytes(param_value)
 

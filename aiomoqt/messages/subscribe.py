@@ -234,6 +234,7 @@ class Subscribe(MOQTMessage):
         for _ in range(param_count):
             param_id = buf.pull_uint_var()
             param_len = buf.pull_uint_var()
+            logger.debug(f"MOQT messages: Subscribe.deserialize(): {hex(param_id)} len: {param_len}")
             param_value = buf.pull_bytes(param_len)
             params[param_id] = param_value
 

@@ -73,7 +73,6 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         self._loop = asyncio.get_running_loop()
         self._wt_session_setup: Future[bool] = self._loop.create_future()
         self._moqt_version: int = MOQT_CUR_VERSION
-        self._moqt_ctx_version: Optional[contextvars.Token] = None
         self._moqt_session_setup: Future[bool] = self._loop.create_future()
         self._moqt_session_closed: Future[Tuple[int,str]] = self._loop.create_future()
         self._next_subscribe_id = 1  # prime subscribe id generator
@@ -98,7 +97,6 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
 
     async def __aexit__(self, exc_type, exc, tb):
         # Clean up the context when the session exits
-        reset_moqt_ctx_version(self._moqt_ctx_version)
 
         return await super().__aexit__(exc_type, exc, tb)
 
@@ -150,6 +148,22 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         else:
             e = task.exception()
             if e: logger.error(f"MOQT error: control task failed with exception: {e}")
+
+    def _endpoint_match(self, path: Union[bytes,str]):
+        endpoint = getattr(self._session, 'endpoint')
+        if endpoint is None:
+            return False
+        # Convert bytes to str if needed
+        if isinstance(endpoint, bytes):
+            endpoint = endpoint.decode('utf-8')
+        if isinstance(path, bytes):
+            path = path.decode('utf-8')
+            
+        # Strip trailing slashes
+        endpoint = endpoint.rstrip('/')
+        path = path.rstrip('/')
+        
+        return endpoint == path
             
     def _moqt_handle_control_message(self, buf: Buffer) -> Optional[MOQTMessage]:
         """Process an incoming message."""
@@ -157,8 +171,8 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         if buf_len == 0:
             logger.warning("MOQT event: handle control message: no data")
             return None
-
-        logger.debug(f"MOQT event: handle control message: ({buf_len} bytes)")
+        pos = buf.tell()
+        logger.debug(f"MOQT event: handle control message: ({buf_len} bytes) 0x{buf.data_slice(0, buf_len).hex()}")
         try:
             start_pos = buf.tell()
             msg_type = buf.pull_uint_var()
@@ -290,9 +304,6 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                                 logger.info(f"MOQT stream({stream_id}): {group_id}.{subgroup_id}.{object_id} status: {status} size: {consumed} bytes")
                                 self._stream_queues[stream_id].closed = True
                                 return
-                    (sts, id) = MOQTSessionProtocol.get_ts_objid(msg_obj.payload)
-                    rts = int(time.time()*1000)
-                    # logger.info(f"MOQT stream({stream_id}): {id} status: {status} size: {consumed} bytes delay: {rts - sts} ms")
                     logger.info(f"MOQT stream({stream_id}): {group_id}.{subgroup_id}.{object_id} {msg_obj} size: {consumed} bytes")
                 elif isinstance(msg_obj, SubgroupHeader):
                     logger.info(f"MOQT stream({stream_id}): SubgroupHeader: {msg_obj.group_id}.{msg_obj.subgroup_id} {msg_obj} size: {consumed} bytes")
@@ -300,7 +311,8 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                     group_id = msg_obj.group_id
                     subgroup_id = msg_obj.subgroup_id
                 else:
-                    raise RuntimeError
+                    # raise RuntimeError
+                    logger.info(f"MOQT stream({stream_id}): {class_name(msg_obj)} size: {consumed} bytes")
 
             if needed > 0:
                 have = msg_len - cur_pos
@@ -326,30 +338,42 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
             if self._data_streams.get(stream_id) is None:
                 # Get stream type from first byte
                 stream_type = buf.pull_uint_var()
-                assert stream_type == DataStreamType.SUBGROUP_HEADER
-                # logger.debug(f"MOQT stream({stream_id}): SubgroupHeader parse: data: 0x{buf.data_slice(pos,pos+8).hex()}...")
-                msg_header = SubgroupHeader.deserialize(buf)
+                if stream_type == DataStreamType.SUBGROUP_HEADER:
+                    # logger.debug(f"MOQT stream({stream_id}): SubgroupHeader parse: data: 0x{buf.data_slice(pos,pos+8).hex()}...")
+                    msg_header = SubgroupHeader.deserialize(buf)
+                    data_type = DataStreamType(stream_type).name
+                elif stream_type == DataStreamType.FETCH_HEADER:
+                    msg_header = FetchHeader.deserialize(buf)
+                    data_type = DataStreamType(stream_type).name
+                else:
+                    data_type = f"0x{hex(stream_type)}"
+                    logger.error(f"MOQT stream({stream_id}): unexpected data stream type: {stream_type}")
+
                 if msg_header is None:
-                    error = f"data stream {stream_id}: SubgroupHeader parse failed at: {buf.tell()}"
+                    error = f"data stream {stream_id}: {data_type} parse failed at: {buf.tell()}"
                     logger.error(f"MOQT error: " + error)
                     self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
                     return None
-                consumed = buf.tell() - pos        
-                logger.debug(f"MOQT stream({stream_id}): SubgroupHeader parse: id: {msg_header.group_id} consumed: {consumed} bytes")
-                # logger.debug(f"MOQT stream({stream_id}): SubgroupHeader parse: data: 0x{buf.data_slice(pos,buf.tell()).hex()}...")
-                # record that the data stream header has been processed    
-                self._data_streams[stream_id] = msg_header.track_alias
+                
+                # record that the data stream header has been processed
+                consumed = buf.tell() - pos            
+                logger.debug(f"MOQT stream({stream_id}): {msg_header} consumed: {consumed} bytes")
+                self._data_streams[stream_id] = msg_header
             else:
-                # logger.debug(f"MOQT stream({stream_id}): ObjectHeader parse: data: 0x{buf.data_slice(pos,pos+8).hex()}...")
-                msg_header = ObjectHeader.deserialize(buf, len)
+                if isinstance(self._data_streams[stream_id], SubgroupHeader):
+                    msg_header = ObjectHeader.deserialize(buf, len)
+
+                elif isinstance(self._data_streams[stream_id], FetchHeader):
+                    msg_header = FetchObject.deserialize(buf)
+
                 if msg_header is None:
                     error = f"MOQT stream({stream_id}): ObjectHeader parse failed at: {buf.tell()}"
                     logger.error(f"MOQT error: " + error)
                     self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
                     return None
                 consumed = buf.tell() - pos        
-                logger.debug(f"MOQT stream({stream_id}): ObjectHeader parse: id: {msg_header.object_id} consumed: {consumed} bytes")
-                # logger.debug(f"MOQT stream({stream_id}): ObjectHeader parse: data: 0x{buf.data_slice(pos,pos+consumed).hex()}...")
+                logger.debug(f"MOQT stream({stream_id}): {class_name(msg_header)} consumed: {consumed} bytes")
+
                     
             return msg_header
         except Exception:
@@ -575,8 +599,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         else:
             # Server: Handle incoming WebTransport CONNECT request
             if method == b"CONNECT" and protocol == b"webtransport":
-                if path == self._session.endpoint:
-                    
+                if self._endpoint_match(path):
                     self._session_id = stream_id
                     # Send 200 response with WebTransport headers
                     response_headers = [
@@ -930,8 +953,8 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
     ) -> Optional[Tuple[MOQTMessage, MOQTMessage]]:
         """Subscribe and Joining Fetch."""
         parameters = {} if parameters is None else parameters
-        subscribe_id = self._allocate_subscribe_id() if subscribe_id is None else subscribe_id
-        track_alias = self._allocate_track_alias(subscribe_id) if track_alias is None else track_alias
+        subscribe_id = self._allocate_subscribe_id()
+        track_alias = self._allocate_track_alias(subscribe_id)
         namespace = self._make_namespace_tuple(namespace)
         track_name = track_name.encode() if isinstance(track_name, str) else track_name
 
@@ -941,6 +964,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
             namespace=namespace,
             track_name=track_name,
             priority=subscriber_priority,
+            group_order=group_order,
             filter_type=FilterType.LATEST_OBJECT,
             parameters=parameters
         )
@@ -951,8 +975,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         fetch_subscribe_id = self._allocate_subscribe_id()
         message = Fetch(
             subscribe_id=fetch_subscribe_id,
-            track_alias=track_alias,
-            priority=subscriber_priority,
+            subscriber_priority=subscriber_priority,
             group_order=group_order,
             joining_sub_id=subscribe_id,
             fetch_type=FetchType.JOINING_FETCH,
@@ -1289,8 +1312,8 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                 )
             else:
                 self._moqt_version = selected_version
-                # set the version context var scoped to the session
-                self._moqt_ctx_version = set_moqt_ctx_version(self._moqt_version)
+                # set version context scoped to the session and save prev state token
+                set_moqt_ctx_version(self._moqt_version)
 
             # indicate moqt session setup is complete
             self._moqt_session_setup.set_result(True)

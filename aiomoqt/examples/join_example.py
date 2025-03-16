@@ -59,6 +59,7 @@ async def main(host: str, port: int, endpoint: str, namespace: str, track_name: 
                         ParamType.AUTHORIZATION_INFO: b"auth-token-123",
                         ParamType.DELIVERY_TIMEOUT: 10,
                     },
+                    pre_group_offset=2,
                     wait_response=True
                 )
 

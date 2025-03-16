@@ -48,11 +48,12 @@ async def dgram_subscribe_data_generator(session: MOQTSessionProtocol, msg: Subs
 async def subscribe_data_generator(session: MOQTSessionProtocol, msg: Subscribe) -> None:
     """Wrapper for subscribe handler - spawns stream generators after standard handler"""
     
-    session.default_message_handler(msg.type, msg)  
+    session.default_message_handler(msg.type, msg)
+
     tasks = []
     # Base layer 
     task = asyncio.create_task(
-        generate_subgroup_stream(
+    generate_subgroup_stream(
             session=session,
             subgroup_id=0,
             track_alias=msg.track_alias,
@@ -302,7 +303,6 @@ async def main(host: str, port: int, endpoint: str, namespace: str, trackname: s
             
             # Complete the MoQT session setup
             await session.client_session_init()
-            logger.debug(f"MOQT app: {session._quic._local_max_stream_data_bidi_remote}")
             logger.info(f"MOQT app: announce namespace: {namespace}")
             response = await session.announce(
                 namespace=namespace,
