@@ -8,7 +8,7 @@ moqt_version = MOQT_CUR_VERSION
 def get_moqt_ctx_version() -> int:
     return moqt_version
 
-def set_moqt_ctx_version(version: int) -> int:
+def set_moqt_ctx_version(version: int = MOQT_CUR_VERSION) -> int:
     global moqt_version
     moqt_version = version
     return moqt_version

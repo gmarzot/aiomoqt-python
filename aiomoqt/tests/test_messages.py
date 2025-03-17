@@ -342,6 +342,7 @@ TEST_CASES = [
             'subgroup_id': 2,
             'object_id': 3,
             'publisher_priority': 56,
+            'extensions': {0: 4207849484, 1: b'\xfa\xce\xb0\x0c'},
             'payload': b'Sample Payload'
         },
         None,
@@ -354,8 +355,8 @@ TEST_CASES = [
             'subgroup_id': 2,
             'object_id': 3,
             'publisher_priority': 56,
-            'status': ObjectStatus.NORMAL,
-            'payload': b'Fetch Data'
+            'extensions': {},
+            'payload': b''
         },
         None,
         False,
@@ -380,6 +381,7 @@ TEST_CASES = [
             'group_id': 456,
             'object_id': 789,
             'publisher_priority': 0,
+            'extensions': {0: 4207849484, 1: b'\xfa\xce\xb0\x0c'},
             'status': ObjectStatus.DOES_NOT_EXIST
         },
         DatagramType.OBJECT_DATAGRAM_STATUS,
@@ -435,6 +437,7 @@ def test_fetch_object():
         'subgroup_id': 2,
         'object_id': 3,
         'publisher_priority': 56,
+        'extensions': {},
         'payload': b'Sample payload'
     }
     assert moqt_message_serialization(FetchObject, params)
@@ -456,6 +459,7 @@ def test_object_datagram_status():
         'group_id': 456,
         'object_id': 789,
         'publisher_priority': 0,
+        'extensions': {},
         'status': ObjectStatus.DOES_NOT_EXIST
     }
     assert moqt_message_serialization(ObjectDatagramStatus, params, DatagramType.OBJECT_DATAGRAM_STATUS)
@@ -491,6 +495,7 @@ def test_fetch_object():
         'subgroup_id': 2,
         'object_id': 3,
         'publisher_priority': 56,
+        'extensions': {0: 4207849484, 1: b'\xfa\xce\xb0\x0c'},
         'payload': b'Sample payload'
     }
     assert moqt_message_serialization(FetchObject, params)
@@ -512,7 +517,8 @@ def test_object_datagram_status():
         'group_id': 456,
         'object_id': 789,
         'publisher_priority': 0,
-        'status': ObjectStatus.DOES_NOT_EXIST
+        'extensions': {10000: 4207849484, 100000001: b'\xfa\xce\xb0\x0c'},
+        'status': ObjectStatus.END_OF_GROUP
     }
     assert moqt_message_serialization(ObjectDatagramStatus, params, DatagramType.OBJECT_DATAGRAM_STATUS)
 

@@ -1,8 +1,6 @@
 from dataclasses import fields
 from aiomoqt.messages import MOQTMessageType
-from aiomoqt.context import set_moqt_ctx_version
 
-set_moqt_ctx_version()
 
 def moqt_test_id(case):
     """

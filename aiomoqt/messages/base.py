@@ -65,14 +65,13 @@ class MOQTMessage:
 
     @staticmethod
     def _extensions_decode(buf: Buffer) -> Dict[int, Union[int, bytes]]:
-        exts = None
+        exts = {}
         vers = get_moqt_ctx_version()
         major_version = get_major_version(vers)
         logger.debug(f"MOQTMessage._extensions_decode(): {vers} maj: {major_version}")
         if major_version > 8:
             exts_len = buf.pull_uint_var()
             if exts_len > 0:
-                exts = {}
                 pos = buf.tell()
                 exts_end = pos + exts_len
                 while buf.tell() < exts_end:
@@ -88,7 +87,6 @@ class MOQTMessage:
         else:
             exts_len = buf.pull_uint_var()
             if exts_len > 0:
-                exts = {}
                 for _ in range(exts_len):
                     ext_id = buf.pull_uint_var()
                     if ext_id % 2 == 0:  # even extension types are simple var int

@@ -4,7 +4,7 @@ from typing import Optional, Dict, Tuple, Union
 from aioquic.buffer import Buffer, BufferReadError
 
 from .base import MOQTUnderflow, MOQTMessage, BUF_SIZE
-from ..types import ObjectStatus, DataStreamType, ForwardingPreference, DatagramType
+from ..types import ObjectStatus, DataStreamType, DatagramType, MOQT_DEFAULT_PRIORITY
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -15,7 +15,6 @@ class Track:
     """Represents a MOQT track."""
     namespace: Tuple[bytes, ...]
     name: bytes
-    forwarding_preference: ForwardingPreference
     groups: Dict[int, 'Group'] = None
 
     def __post_init__(self):
@@ -68,7 +67,7 @@ class SubgroupHeader:
     track_alias: int
     group_id: int
     subgroup_id: int
-    publisher_priority: int
+    publisher_priority: int = MOQT_DEFAULT_PRIORITY
     
     def __post_init__(self):
         self.type = DataStreamType.SUBGROUP_HEADER
@@ -156,8 +155,7 @@ class ObjectHeader:
         )
 
     @classmethod
-    def deserialize_track(cls, buf: Buffer, forwarding_preference: ForwardingPreference, 
-                         subgroup_id: Optional[int] = None) -> 'ObjectHeader':
+    def deserialize_track(cls, buf: Buffer, subgroup_id: Optional[int] = None) -> 'ObjectHeader':
         """Deserialize an object with track forwarding."""
         track_alias = buf.pull_uint_var()
         group_id = buf.pull_uint_var()
@@ -181,7 +179,6 @@ class ObjectHeader:
             group_id=group_id,
             object_id=object_id,
             publisher_priority=publisher_priority,
-            forwarding_preference=forwarding_preference,
             subgroup_id=subgroup_id,
             status=status,
             payload=payload
@@ -211,8 +208,8 @@ class FetchObject:
     group_id: int
     subgroup_id: int 
     object_id: int
-    publisher_priority: int
-    extensions: Dict[int, bytes]
+    publisher_priority: int = MOQT_DEFAULT_PRIORITY
+    extensions: Dict[int, bytes] = None
     status: ObjectStatus = ObjectStatus.NORMAL
     payload: bytes = b''
 
@@ -274,7 +271,7 @@ class ObjectDatagram(MOQTMessage):
     track_alias: int
     group_id: int
     object_id: int
-    publisher_priority: int
+    publisher_priority: int = MOQT_DEFAULT_PRIORITY
     extensions: Optional[Dict[int, bytes]] = None
     payload: bytes = b''
 
@@ -323,7 +320,7 @@ class ObjectDatagramStatus(MOQTMessage):
     track_alias: int
     group_id: int
     object_id: int
-    publisher_priority: int
+    publisher_priority: int = MOQT_DEFAULT_PRIORITY
     extensions: Optional[Dict[int, bytes]] = None
     status: ObjectStatus = ObjectStatus.NORMAL
 
@@ -365,9 +362,3 @@ class ObjectDatagramStatus(MOQTMessage):
             status=status
         )
 
-
-class TrackDataParser:
-
-    def _handle_stream_object_data(self, hdr: MOQTMessage, buf: Buffer) -> None:
-        """Process object data messages."""
-        logger.debug(f"async handler called for osyr")
