@@ -3,8 +3,7 @@ from typing import Optional, Dict, Tuple, Union
 
 from aioquic.buffer import Buffer, BufferReadError
 
-from .base import MOQTUnderflow, MOQTMessage, BUF_SIZE
-from ..types import ObjectStatus, DataStreamType, DatagramType, MOQT_DEFAULT_PRIORITY
+from . import MOQTUnderflow, MOQTMessage, ObjectStatus, DataStreamType, DatagramType, MOQT_DEFAULT_PRIORITY, BUF_SIZE
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -62,7 +61,7 @@ class Subgroup:
 
 
 @dataclass
-class SubgroupHeader:
+class SubgroupHeader(MOQTMessage):
     """MOQT subgroup stream header."""
     track_alias: int
     group_id: int
@@ -99,7 +98,7 @@ class SubgroupHeader:
 
 
 @dataclass
-class ObjectHeader:
+class ObjectHeader(MOQTMessage):
     """MOQT object header."""
     object_id: int
     extensions: Optional[Dict[int, Union[bytes, int]]] = None
@@ -185,7 +184,7 @@ class ObjectHeader:
         )
 
 @dataclass
-class FetchHeader:
+class FetchHeader(MOQTMessage):
     """MOQT fetch stream header."""
     subscribe_id: int
 
@@ -203,7 +202,7 @@ class FetchHeader:
         return cls(subscribe_id=subscribe_id)
 
 @dataclass
-class FetchObject:
+class FetchObject(MOQTMessage):
     """Object within a fetch stream."""
     group_id: int
     subgroup_id: int 

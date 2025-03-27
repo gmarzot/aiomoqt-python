@@ -101,22 +101,6 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         return await super().__aexit__(exc_type, exc, tb)
 
     @staticmethod
-    def get_ts_objid(line: str):
-        # Convert bytes to string if needed
-        if isinstance(line, bytes):
-            line = line.decode('utf-8', errors='replace')
-        # Pattern to match the timestamp and object ID
-        pattern = r'^\|\s+(\d+)\s+\|\S\|\s+(\d+\.\d+(?:\.\d+)*)'
-        match = re.search(pattern, line)
-        if match:
-            timestamp = match.group(1)
-            object_id = match.group(2)
-            timestamp = int(timestamp) if timestamp is not None else 0
-            object_id = object_id if object_id is not None else "<no-match>"
-            return timestamp, object_id
-        return 0, "<no-match>"
-
-    @staticmethod
     def _make_namespace_tuple(namespace: Union[str, Tuple[str, ...]]) -> Tuple[bytes, ...]:
         """Convert string or tuple into bytes tuple."""
         if isinstance(namespace, str):
@@ -250,7 +234,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
 
                     if msg_len < needed:
                         needed -= msg_len
-                        re_buf.push_bytes(msg_buf.data_slice(cur_pos,msg_len))
+                        re_buf.push_bytes(msg_buf.data_slice(cur_pos, msg_len))
                         have = re_buf.tell()
                         logger.debug(f"MOQT stream({stream_id}): data added: len: {msg_len} have: {have} still need: {needed}")
                     elif cur_pos == msg_len:
@@ -299,20 +283,25 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                     assert object_id is None or msg_obj.object_id > object_id
                     object_id = msg_obj.object_id
                     status = ObjectStatus(msg_obj.status).name
+                    id = f"{group_id}.{subgroup_id}.{object_id}"
+                    now = int(time.time()*1000)
+                    msg_ts = msg_obj.extensions.get(MOQT_TIMESTAMP_EXT)
+                    delay = f"delay: {now - msg_ts} ms" if msg_ts else ""
+                    logstr = f"{id} status: {status} size: {consumed} bytes {delay}"
                     if status != ObjectStatus.NORMAL:
                         if msg_obj.status in (ObjectStatus.END_OF_GROUP, ObjectStatus.END_OF_TRACK):
-                                logger.info(f"MOQT stream({stream_id}): {group_id}.{subgroup_id}.{object_id} status: {status} size: {consumed} bytes")
+                                logger.info(f"MOQT stream({stream_id}): {logstr}")
                                 self._stream_queues[stream_id].closed = True
                                 return
-                    logger.info(f"MOQT stream({stream_id}): {group_id}.{subgroup_id}.{object_id} {msg_obj} size: {consumed} bytes")
+                    logger.info(f"MOQT stream({stream_id}): {logstr}")
                 elif isinstance(msg_obj, SubgroupHeader):
-                    logger.info(f"MOQT stream({stream_id}): SubgroupHeader: {msg_obj.group_id}.{msg_obj.subgroup_id} {msg_obj} size: {consumed} bytes")
+                    logger.info(f"MOQT stream({stream_id}): {msg_obj} size: {consumed} bytes")
                     assert group_id is None or msg_obj.group_id > group_id
                     group_id = msg_obj.group_id
                     subgroup_id = msg_obj.subgroup_id
                 else:
+                    logger.error(f"MOQT stream({stream_id}): {msg_obj} size: {consumed} bytes")
                     # raise RuntimeError
-                    logger.info(f"MOQT stream({stream_id}): {class_name(msg_obj)} size: {consumed} bytes")
 
             if needed > 0:
                 have = msg_len - cur_pos
@@ -322,7 +311,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                     needed -= have
                 re_buf.seek(0)
                 re_buf.push_bytes(saved_bytes)
-                logger.debug(f"MOQT stream({stream_id}): saved {have} bytes tell: {re_buf.tell()} still need: {needed}")
+                logger.debug(f"MOQT stream({stream_id}): saved {have} bytes still need: {needed}")
                 cur_pos = 0
 
     def _moqt_handle_data_stream(self, stream_id: int, buf: Buffer, len: int) -> MOQTMessage:
@@ -339,7 +328,6 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                 # Get stream type from first byte
                 stream_type = buf.pull_uint_var()
                 if stream_type == DataStreamType.SUBGROUP_HEADER:
-                    # logger.debug(f"MOQT stream({stream_id}): SubgroupHeader parse: data: 0x{buf.data_slice(pos,pos+8).hex()}...")
                     msg_header = SubgroupHeader.deserialize(buf)
                     data_type = DataStreamType(stream_type).name
                 elif stream_type == DataStreamType.FETCH_HEADER:
@@ -384,10 +372,9 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         if buf.capacity == 0 or buf.tell() >= buf.capacity:
             logger.error(f"MOQT datagram: no data {buf.tell()}")
             return
-        
         logger.debug(f"MOQT handle datagram: 0x{buf.data_slice(0,min(buf.capacity,12))}")
-
         # Get stream type from first byte
+        pos = buf.tell()
         dgram_type = buf.pull_uint_var()
         if dgram_type == DatagramType.OBJECT_DATAGRAM:
             msg = ObjectDatagram.deserialize(buf,buf.capacity)
@@ -396,9 +383,17 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                 logger.error(f"MOQT error: " + error)
                 self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
                 return msg
-            (sts, id) = MOQTSessionProtocol.get_ts_objid(msg.payload)
-            rts = int(time.time()*1000)
-            logger.info(f"MOQT event: ObjectDatagram: {id} alias: {msg.track_alias} len: {buf.capacity} bytes delay: {rts-sts} ms")
+            
+            consumed = buf.tell() - pos        
+            group_id = msg.group_id
+            object_id = msg.object_id
+            id = f"{group_id}.{object_id}"
+            now = int(time.time()*1000)
+            msg_ts = msg.extensions.get(MOQT_TIMESTAMP_EXT)
+            delay = f"delay: {now - msg_ts} ms" if msg_ts else ""
+            logstr = f"{id} size: {consumed} bytes {delay}"
+
+            logger.info(f"MOQT event: ObjectDatagram: {logstr}")
             return msg            
         elif dgram_type == DatagramType.OBJECT_DATAGRAM_STATUS:
             msg = ObjectDatagramStatus.deserialize(buf)
@@ -407,7 +402,17 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                 logger.error(f"MOQT error: " + error)
                 self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
                 return msg
-            logger.info(f"MOQT event: ObjectDatagramStatus: {msg.group_id}.{msg.object_id} status: {msg.status} len: {buf.capacity} bytes")               
+            
+            consumed = buf.tell() - pos        
+            group_id = msg.group_id
+            object_id = msg.object_id
+            id = f"{group_id}.{object_id}"
+            now = int(time.time()*1000)
+            msg_ts = msg.extensions.get(MOQT_TIMESTAMP_EXT)
+            delay = f"delay: {now - msg_ts} ms" if msg_ts else ""
+            logstr = f"{id} size: {consumed} bytes {delay}"
+            
+            logger.info(f"MOQT event: ObjectDatagramStatus: {logstr}")               
         else:
             error = f"datagram type unknown: {dgram_type}"
             logger.error(f"MOQT error: " + error)
@@ -422,7 +427,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
     def connection_made(self, transport):
         """Called when QUIC connection is established."""
         super().connection_made(transport)
-        self._h3 = H3CustomConnection(self._quic, enable_webtransport=True)
+        self._h3 = H3CustomConnection(self._quic, table_capacity=4096, enable_webtransport=True)
         logger.info("H3 connection initialized")
 
     # primary event handling for all QUIC messaging
@@ -1444,7 +1449,6 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         future = self._subscribe_announces_responses.get(msg.namespace_prefix)
         if future and not future.done():
             future.set_result(msg)
-        logger.debug(f"_handle_subscribe_announces_ok: {future} {future.done()}")
 
     async def _handle_subscribe_announces_error(self, msg: SubscribeAnnouncesError) -> None:
         logger.info(f"MOQT event: handle {msg}")

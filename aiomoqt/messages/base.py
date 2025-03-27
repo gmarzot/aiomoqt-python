@@ -3,7 +3,7 @@ from dataclasses import dataclass, fields
 
 from aioquic.buffer import Buffer
 
-from ..types import *
+from . import ParamType, SetupParamType
 from ..utils.logger import *
 from ..context import get_moqt_ctx_version, get_major_version
 
@@ -27,7 +27,7 @@ class MOQTMessage:
     def _extensions_encode(buf: Buffer, exts: Dict) -> None:
         vers = get_moqt_ctx_version()
         major_version = get_major_version(vers)
-        logger.debug(f"MOQTMessage._extensions_encode(): {vers} maj: {major_version}")
+        # logger.debug(f"MOQTMessage._extensions_encode(): {vers} maj: {major_version}")
         if exts is None or len(exts) == 0:
             buf.push_uint_var(0)
             return
@@ -68,7 +68,7 @@ class MOQTMessage:
         exts = {}
         vers = get_moqt_ctx_version()
         major_version = get_major_version(vers)
-        logger.debug(f"MOQTMessage._extensions_decode(): {vers} maj: {major_version}")
+        # logger.debug(f"MOQTMessage._extensions_decode(): {vers} maj: {major_version}")
         if major_version > 8:
             exts_len = buf.pull_uint_var()
             if exts_len > 0:
@@ -82,7 +82,6 @@ class MOQTMessage:
                         value_len = buf.pull_uint_var()
                         ext_value = buf.pull_bytes(value_len)
                     exts[ext_id] = ext_value
-                logger.info(f"MOQT messages: decoding extensions: version: {major_version} {exts}")
                 assert buf.tell() == exts_end, f"Payload length mismatch: {exts_len} {buf.tell()-pos}"
         else:
             exts_len = buf.pull_uint_var()
@@ -132,6 +131,7 @@ class MOQTMessage:
         class_fields = fields(self.__class__)
 
         for field in class_fields:
+            str_val = b''
             value = getattr(self, field.name)
             if "version" in field.name.lower():
                 if isinstance(value, (list, tuple)):
@@ -152,15 +152,21 @@ class MOQTMessage:
                 str_val = "{" + ", ".join(items) + "}"
             elif isinstance(value, bytes):
                 try:
-                    str_val = value.decode('utf-8')
+                    decoded = value.decode('utf-8')
+                    str_val = f"{decoded[:32]}..." if len(decoded) > 32 else decoded
                 except UnicodeDecodeError:
-                    str_val = f"0x{value.hex()}"
+                    # Limit bytes output to 16 bytes max, with indicator if truncated
+                    hex_output = value.hex()
+                    str_val = f"0x{hex_output[:32]}..." if len(hex_output) > 32 else f"0x{hex_output}"
             elif isinstance(value, dict):
                 str_val = "{" + ", ".join(f"{k}: {v}" for k, v in value.items()) + "}"
             elif field.name == 'payload':
-                str_val = f"0x{value.hex()}"
+                # Limit payload output to 16 bytes max, with indicator if truncated
+                hex_output = value.hex()
+                str_val = f"0x{hex_output[:32]}..." if len(hex_output) > 32 else f"0x{hex_output}"
             else:
                 str_val = str(value)
+                
             parts.append(f"{field.name}={str_val}")
 
         return f"{class_name(self)}({', '.join(parts)})"

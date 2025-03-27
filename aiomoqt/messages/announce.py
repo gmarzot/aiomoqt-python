@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 from typing import Dict, Tuple
+
 from aioquic.buffer import Buffer
-from .base import MOQTMessage, BUF_SIZE 
-from ..types import MOQTMessageType
+
+from . import MOQTMessageType, MOQTMessage, BUF_SIZE
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)

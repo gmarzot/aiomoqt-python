@@ -1,10 +1,19 @@
 from enum import IntEnum
 
+MOQT_VERSIONS = [
+    0xff000008, 
+    0xff080000, 
+    0xff000009, 
+    0xff090000, 
+    0xff00000a, 
+    0xff0a0000
 
-MOQT_VERSIONS = [0xff000008, 0xff080000, 0xff000009, 0xff090000, 0xff00000a, 0xff0a0000]
+]
 MOQT_CUR_VERSION = 0xff00000a
 
 MOQT_DEFAULT_PRIORITY = 128
+
+MOQT_TIMESTAMP_EXT = 0x20
 
 class MOQTMessageType(IntEnum):
     """MOQT message type constants."""

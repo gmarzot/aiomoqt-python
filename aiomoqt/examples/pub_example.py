@@ -20,8 +20,8 @@ from aiomoqt.utils import *
 
 
 # Create fixed padding buffers once
-I_FRAME_PAD = b'I' * 1024 * 1
-P_FRAME_PAD = b'P' * 512 * 1
+I_FRAME_PAD = b'I' * 1024 * 50
+P_FRAME_PAD = b'P' * 512 * 5
 
 FRAME_INTERVAL = 1/30  # 33ms
 GROUP_SIZE = 30
@@ -100,8 +100,9 @@ async def generate_group_dgram(session: MOQTSessionProtocol, track_alias: int, p
                         publisher_priority=priority,
                         status=status,
                         extensions = {
-                            0: 4207849484,
-                            37: f"MOQT-TS: {int(time.time()*1000)}"
+                            0x00: 4207849484,
+                            0x25: f"MOQT-TS: {int(time.time()*1000)}",
+                            MOQT_TIMESTAMP_EXT: int(time.time()*1000)
                         }
                     )
 
@@ -109,32 +110,24 @@ async def generate_group_dgram(session: MOQTSessionProtocol, track_alias: int, p
                     if session._close_err is not None:
                         logger.error(f"MOQT app: session closed with error: {session._close_err}")
                         raise MOQTException(*session._close_err)
-                    logger.debug(f"MOQT app: sending: ObjectDatagramStatus: id:{group_id-1}.{object_id} alias: {obj.track_alias} status: END_OF_GROUP")
+                    logger.info(f"MOQT app: sending: ObjectDatagramStatus: id: {group_id-1}.{object_id} alias: {obj.track_alias} status: END_OF_GROUP")
                     if session._close_err is not None:
                         raise asyncio.CancelledError
                     session._quic.send_datagram_frame(b'\0' + msg.data)
                     session.transmit()
                     
                 object_id = 0
-                ts = int(time.time()*1000)                    
                 # prepare I frame
-                info = f"| {ts} |I| {group_id}.{object_id} |".encode()
+                info = f"| {group_id}.{object_id} |".encode()
                 payload = info + I_FRAME_PAD            
             else:
-                ts = int(time.time()*1000)                    
                 # prepare P frame            
-                info = f"| {ts} |P| {group_id}.{object_id} |".encode()
+                info = f"| {group_id}.{object_id} |".encode()
                 payload = info + P_FRAME_PAD 
 
-            logger.debug(f"MOQT app: sending: ObjectDatagram: id: {group_id}.{object_id} payload size: {len(payload)} bytes")
-            if object_id == 0:
-                extensions = {
-                    0: 4207849484,
-                    37: f"MOQT-TS: {ts}".encode()
-                }
-            else:
-                extensions = {} 
-                
+            # system local timestamp
+            extensions = {MOQT_TIMESTAMP_EXT: int(time.time()*1000)}
+
             payload = payload[:1100]    
             obj = ObjectDatagram(
                 track_alias=track_alias,
@@ -149,10 +142,10 @@ async def generate_group_dgram(session: MOQTSessionProtocol, track_alias: int, p
                 raise RuntimeError()
             msg = obj.serialize()
             msg_len = len(msg.data)
-            logger.debug(f"MOQT app: sending: ObjectDatagram: id: {group_id}.{object_id} alias: {obj.track_alias} size: {msg_len} {msg.tell()} bytes")
+
             if session._close_err is not None:
                 raise asyncio.CancelledError
-
+            logger.info(f"MOQT app: sending: ObjectDatagram: id: {group_id}.{object_id} size: {msg_len} bytes")
             session._quic.send_datagram_frame(b'\0' + msg.data)
             session.transmit()
             
@@ -193,14 +186,15 @@ async def generate_subgroup_stream(session: MOQTSessionProtocol, subgroup_id: in
                         status=status,
                         extensions={
                             0: 4207849484,
-                            37: f"MOQT-TS: {int(time.time()*1000)}"
+                            0x25: f"MOQT-TS: {int(time.time()*1000)}",
+                            MOQT_TIMESTAMP_EXT: int(time.time()*1000)
                         }
                     )
                     msg = header.serialize()
-                    logger.debug(f"MOQT app: sending object status: Ox{msg.data.hex()}")
-                    if session._close_err is not None:
+                    logger.debug(f"MOQT app: sending object status: {header} Ox{msg.data.hex()}")
+                    if session._close_err or session._h3 is None or session._quic._close_pending:
                         raise asyncio.CancelledError
-                    logger.debug(f"MOQT app: sending: ObjectHeader END_OF_GROUP: id:{group_id-1}.{subgroup_id}.{object_id}")
+                    logger.info(f"MOQT app: sending: ObjectHeader END_OF_GROUP: id: {group_id-1}.{subgroup_id}.{object_id} {msg.tell()} bytes")
                     session._quic.send_stream_data(stream_id, msg.data, end_stream=True)
                     session.transmit()
                     # create next group data stream
@@ -221,27 +215,19 @@ async def generate_subgroup_stream(session: MOQTSessionProtocol, subgroup_id: in
                 
                 if session._close_err is not None:
                     raise asyncio.CancelledError
-                logger.debug(f"MOQT app: sending: {header}")
+                logger.info(f"MOQT app: sending: {header} {msg.tell()} bytes")
                 session._quic.send_stream_data(stream_id, msg.data, end_stream=False)
                 session.transmit()
                 
-                ts = int(time.time()*1000)                    
                 # prepare I frame
-                info = f"| {ts} |I| {group_id}.{subgroup_id}.{object_id} |".encode()
+                info = f"| {group_id}.{subgroup_id}.{object_id} |".encode()
                 payload = info + I_FRAME_PAD
             else:
-                ts = int(time.time()*1000)                    
                 # prepare P frame            
-                info = f"| {ts} |P| {group_id}.{subgroup_id}.{object_id} |".encode()
+                info = f"| {group_id}.{subgroup_id}.{object_id} |".encode()
                 payload = info + P_FRAME_PAD    
                 
-            if object_id == 0:
-                extensions = {
-                    0: 4207849484,
-                    37: f"MOQT-TS: {ts}".encode()
-                }
-            else:
-                extensions = {}
+            extensions = {MOQT_TIMESTAMP_EXT: int(time.time()*1000)}
                 
             obj = ObjectHeader(
                 object_id=object_id,
@@ -249,10 +235,10 @@ async def generate_subgroup_stream(session: MOQTSessionProtocol, subgroup_id: in
                     extensions=extensions
             )                
             msg = obj.serialize()
-            logger.debug(f"MOQT app: sending ObjectHeader: id: {group_id}.{subgroup_id}.{object_id} size: {msg.tell()} bytes")
-            logger.debug(f"MOQT app: sending ObjectHeader: data: 0x{msg.data_slice(0,16).hex()}...")
             if session._close_err is not None:
                 raise asyncio.CancelledError
+            logger.debug(f"MOQT app: sending ObjectHeader: data: 0x{msg.data_slice(0,16).hex()}...")
+            logger.info(f"MOQT app: sending ObjectHeader: id: {group_id}.{subgroup_id}.{object_id} size: {msg.tell()} bytes")
             session._quic.send_stream_data(stream_id, msg.data, end_stream=False)
             session.transmit()
             
