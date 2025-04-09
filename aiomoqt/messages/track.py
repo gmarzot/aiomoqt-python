@@ -1,7 +1,10 @@
+from enum import IntEnum
 from dataclasses import dataclass
-from typing import Optional, Dict, Tuple, Union
+from sortedcontainers import SortedDict
+from typing import Optional, Dict, List, Tuple, Union
+import time
 
-from aioquic.buffer import Buffer, BufferReadError
+from qh3.buffer import Buffer, BufferReadError
 
 from . import MOQTUnderflow, MOQTMessage, ObjectStatus, DataStreamType, DatagramType, MOQT_DEFAULT_PRIORITY, BUF_SIZE
 from ..utils.logger import get_logger
@@ -9,55 +12,52 @@ from ..utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+
+@dataclass
+class Group:
+    """MOQT Group data accumulator"""
+    group_id: int
+    objects: Optional[SortedDict[int, Buffer]]
+    _max_obj_id: int = -1
+    _last_update: int = 0
+    
+    def __post_init__(self):
+        if self.objects is None:
+            self.objects = SortedDict()
+    
+    def add_object(self, obj_id: int, buf: Buffer) -> None:
+        """Add an object to the track's structure."""
+        self.objects[obj_id] = buf
+        if obj_id > self._max_obj_id:
+            self._max_obj_id = obj_id
+
+    @property
+    def max_obj_id(self) -> int:
+        return self._max_obj_id
+
+    @property
+    def last_update(self) -> float:
+        return self._last_update
+
+
+            
 @dataclass
 class Track:
     """Represents a MOQT track."""
     namespace: Tuple[bytes, ...]
-    name: bytes
-    groups: Dict[int, 'Group'] = None
+    trackname: bytes
+    groups: Optional[SortedDict[int, Group]]
+    _max_grp_id: int = -1
 
     def __post_init__(self):
         if self.groups is None:
-            self.groups = {}
+            self.groups = SortedDict()
 
-    def add_object(self, obj: 'ObjectHeader') -> None:
-        """Add an object to the track's structure."""
-        if obj.group_id not in self.groups:
-            self.groups[obj.group_id] = Group(group_id=obj.group_id)
-        
-        self.groups[obj.group_id].add_object(obj)
-
-@dataclass
-class Group:
-    """Represents a group within a track."""
-    group_id: int
-    subgroups: Dict[int, 'Subgroup'] = None
-
-    def __post_init__(self):
-        if self.subgroups is None:
-            self.subgroups = {}
-
-    def add_object(self, obj: 'ObjectHeader') -> None:
-        """Add an object to appropriate subgroup."""
-        subgroup_id = obj.subgroup_id or 0  # Default to 0 for non-subgroup forwarding
-        if subgroup_id not in self.subgroups:
-            self.subgroups[subgroup_id] = Subgroup(subgroup_id=subgroup_id)
-        
-        self.subgroups[subgroup_id].add_object(obj)
-
-@dataclass
-class Subgroup:
-    """Represents a subgroup within a group."""
-    subgroup_id: int
-    objects: Dict[int, 'ObjectHeader'] = None
-
-    def __post_init__(self):
-        if self.objects is None:
-            self.objects = {}
-
-    def add_object(self, obj: 'ObjectHeader') -> None:
-        """Add an object to the subgroup."""
-        self.objects[obj.object_id] = obj
+    def group(self, grp_id: int) -> Group:
+        group = self.groups.setdefault(grp_id, Group(grp_id))
+        if grp_id > self._max_grp_id:
+            self._max_grp_id = grp_id
+        return group
 
 
 @dataclass

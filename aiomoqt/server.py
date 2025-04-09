@@ -3,17 +3,17 @@ from typing import Any, Optional, Tuple, Coroutine
 
 import asyncio
 from asyncio.futures import Future
-from aioquic.quic.configuration import QuicConfiguration
-from aioquic.asyncio.server import QuicServer, serve
-from aioquic.h3.connection import H3_ALPN
+from qh3.quic.configuration import QuicConfiguration
+from qh3.asyncio.server import QuicServer, serve
+from qh3.h3.connection import H3_ALPN
 
-from .protocol import MOQTSession, MOQTSessionProtocol
+from .protocol import MOQTPeer, MOQTSession
 from .utils.logger import *
 
 logger = get_logger(__name__)
 
 
-class MOQTServerSession(MOQTSession):
+class MOQTServer(MOQTPeer):
     """Server-side session manager."""
     def __init__(
         self,
@@ -26,6 +26,7 @@ class MOQTServerSession(MOQTSession):
         configuration: Optional[QuicConfiguration] = None,
         debug: bool = False
     ):
+        super().__init__()
         self.host = host
         self.port = port
         self.endpoint = endpoint
@@ -41,9 +42,9 @@ class MOQTServerSession(MOQTSession):
                 verify_mode=ssl.CERT_NONE,
                 certificate=certificate,
                 private_key=private_key,
-                congestion_control_algorithm=congestion_control_algorithm,
                 max_datagram_frame_size=65536,
-                max_datagram_size=QuicConfiguration.max_datagram_size,
+                max_data=1024*1024*8,
+                max_stream_data=1024*1024*4,
                 quic_logger=QuicDebugLogger() if debug else None,
                 secrets_log_file=open("/tmp/keylog.server.txt", "a") if debug else None
             )        
@@ -56,16 +57,14 @@ class MOQTServerSession(MOQTSession):
     def serve(self) -> Coroutine[Any, Any, QuicServer]:
         """Start the MOQT server."""
         logger.info(f"Starting MOQT server on {self.host}:{self.port}")
-        
-        protocol = lambda *args, **kwargs: MOQTSessionProtocol(*args, **kwargs, session=self)
-
+        protocol = lambda *args, **kwargs: MOQTSession(*args, **kwargs, session=self)
         return serve(
             self.host,
             self.port,
             configuration=self.configuration,
             create_protocol=protocol,
         )
-
+        
     async def closed(self) -> bool:
         if not self._server_closed.done():
             self._server_closed = await self._server_closed

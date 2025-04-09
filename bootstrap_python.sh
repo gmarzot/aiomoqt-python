@@ -70,7 +70,7 @@ ${UV_PIP_INSTALL} build wheel setuptools
 #${UV_PIP_INSTALL} "git+https://github.com/cython/cython.git"
 ${UV_PIP_INSTALL} "cython==${CYTHON_VERSION}"
 ${UV_PIP_INSTALL} pytest pytest-asyncio pytest-cov pytest-xdist
-${UV_PIP_INSTALL} aioquic
+${UV_PIP_INSTALL} qh3
 
 version=$(python --version 2>&1 | awk '{print $NF}')
 if [ $? -ne 0 ]; then

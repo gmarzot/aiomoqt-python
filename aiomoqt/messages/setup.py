@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Dict, List, Any
-from aioquic.buffer import Buffer
+from qh3.buffer import Buffer
 
 from . import MOQTMessageType, MOQTMessage, SetupParamType, BUF_SIZE
 from ..utils.logger import get_logger
@@ -94,17 +94,14 @@ class ClientSetup(MOQTMessage):
 
     @classmethod
     def deserialize(cls, buf: Buffer) -> 'ClientSetup':
-        """Handle CLIENT_SETUP message."""
-        logger.info(f"CLIENT_SETUP: {buf.data.hex()} ")
-                
+        """Handle CLIENT_SETUP message."""                
         versions = []
         version_count = buf.pull_uint_var()
         for _ in range(version_count):
             versions.append(buf.pull_uint_var())
 
-        param_count = buf.pull_uint_var()
-        logger.info(f"CLIENT_SETUP: version: {versions} params: {param_count} ")
         params = {}
+        param_count = buf.pull_uint_var()
         for _ in range(param_count):
             param_id = buf.pull_uint_var()
             param_len = buf.pull_uint_var()

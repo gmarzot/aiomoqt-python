@@ -3,9 +3,9 @@ import asyncio
 import argparse
 import logging
 
-from aioquic.h3.connection import H3_ALPN
+from qh3.h3.connection import H3_ALPN
 from aiomoqt.types import ParamType, MOQTException
-from aiomoqt.client import MOQTClientSession
+from aiomoqt.client import MOQTClient
 from aiomoqt.protocol import MOQTException
 from aiomoqt.messages.subscribe import SubscribeError
 from aiomoqt.messages.announce import SubscribeAnnouncesError 
@@ -28,7 +28,7 @@ async def main(host: str, port: int, endpoint: str, namespace: str, track_name: 
     set_log_level(log_level)
     logger = get_logger(__name__)
 
-    client = MOQTClientSession(
+    client = MOQTClient(
         host,
         port,
         endpoint=endpoint,

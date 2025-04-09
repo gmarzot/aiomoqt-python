@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Tuple
-from aioquic.buffer import Buffer
+from qh3.buffer import Buffer
 from .base import MOQTMessage, BUF_SIZE
 from ..types import *
 from ..utils.logger import get_logger

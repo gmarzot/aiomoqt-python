@@ -1,12 +1,12 @@
 # aiomoqt - Media over QUIC Transport (MoQT)
 
-`aiomoqt` is an implementaion of the MoQT protocol, based on `asyncio` and `aioquic`.
+`aiomoqt` is an implementaion of the MoQT protocol, based on `asyncio` and `qh3`.
 
 ## Overview
 
 This package implements the [MoQT Specification](https://moq-wg.github.io/moq-transport/draft-ietf-moq-transport.html) (currently **draft-10**). It is desinged for general use as an MoQT client and server library, supporting both 'publish' and 'subscribe' roles.
 
-The architecture follows the [asyncio.Protocol](https://pypi.org/project/asyncio/) design pattern, and extends the [aioquic QuicConnectionProtocol](https://pypi.org/project/aioquic/) protocol.
+The architecture follows the [asyncio.Protocol](https://pypi.org/project/asyncio/) design pattern, and extends the [qh3 QuicConnectionProtocol](https://pypi.org/project/qh3/) protocol.
 
 ### Featurtes
 
@@ -59,7 +59,7 @@ asyncio.run(main())
 
 The high-level control message API is used for sending MoQT control messages to a server, providing typical default values for most arguments, and flexible type handling for input arguments. Those messages which expect a response, support the blocking asyncio ```await``` call construct via an optional flag (```wait_response=True```). The synchronous call will return a response message object. Asynchronous calls will return the request message object, and will return immediately. Some response handling is provided by the default handler.
 
-The message serialization/deserialization classes provide ```<moqt-msg-obj>.serialize()``` which returns an 'aioquic' Buffer with the entire message serialized in buf.data and buf.tell() at the end of the buffer. The buffer data may be passed directly to ```session.send_control_message()```. The ```<moqt-msg-class>.deserialize()``` call returns an instance of the given class populated from the deserialized data. MoQT messages that start with a type and length, will already have had the type and length parsed/pulled provided 'aioquic' buffer.
+The message serialization/deserialization classes provide ```<moqt-msg-obj>.serialize()``` which returns an 'qh3' Buffer with the entire message serialized in buf.data and buf.tell() at the end of the buffer. The buffer data may be passed directly to ```session.send_control_message()```. The ```<moqt-msg-class>.deserialize()``` call returns an instance of the given class populated from the deserialized data. MoQT messages that start with a type and length, will already have had the type and length parsed/pulled provided 'qh3' buffer.
 
 #### see aiomoqt-python/aiomoqt/examples for additional examples
 
@@ -73,10 +73,10 @@ cd aiomoqt-python
 ./bootstrap_python.sh
 source .venv/bin/activate
 ```
-## Installation
+## Local Installation
 
 ```bash
-uv pip install .
+uv pip install -e .
 ```
 
 ## TODO

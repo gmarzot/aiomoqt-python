@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
+import cProfile
+import pstats
+import io
+from functools import wraps
+import os
+import sys
+
+if os.environ.get("USE_AIOQUIC"):
+    import aioquic as qh3
+    sys.modules["qh3"] = qh3
+
 import asyncio
 import argparse
 import logging
 
-from aioquic.h3.connection import H3_ALPN
+from qh3.h3.connection import H3_ALPN
 from aiomoqt.types import ParamType, MOQTException
-from aiomoqt.client import MOQTClientSession
+from aiomoqt.client import MOQTClient
 from aiomoqt.protocol import MOQTException
 from aiomoqt.messages.subscribe import SubscribeError
 from aiomoqt.messages.announce import SubscribeAnnouncesError 
 from aiomoqt.utils.logger import *
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='MOQT WebTransport Client')
@@ -22,13 +34,20 @@ def parse_args():
     parser.add_argument('--keylogfile', type=str, default=None, help='TLS secrets file')
     return parser.parse_args()
 
-
 async def main(host: str, port: int, endpoint: str, namespace: str, track_name: str, debug: bool):
     log_level = logging.DEBUG if debug else logging.INFO
     set_log_level(log_level)
     logger = get_logger(__name__)
 
-    client = MOQTClientSession(
+    # Start memory tracking
+    # import tracemalloc
+    # tracemalloc.start()
+    # start_snapshot = tracemalloc.take_snapshot()
+    # # Start profiling right before entering the context manager
+    # profiler = cProfile.Profile()
+    # profiler.enable()
+
+    client = MOQTClient(
         host,
         port,
         endpoint=endpoint,
@@ -40,7 +59,7 @@ async def main(host: str, port: int, endpoint: str, namespace: str, track_name: 
         async with client.connect() as session:
             try: 
                 response = await session.client_session_init()
-
+                
                 response = await session.subscribe_announces(
                     namespace_prefix=namespace,
                     parameters={ParamType.AUTHORIZATION_INFO: b"auth-token-123"},
@@ -64,9 +83,11 @@ async def main(host: str, port: int, endpoint: str, namespace: str, track_name: 
                 if isinstance(response, SubscribeError):
                     logger.error(f"MOQT app: {response}")
                     raise MOQTException(response.error_code, response.reason)
+
                 # process subscription - publisher will open stream and send data
                 await session.async_closed()
                 logger.info(f"MOQT app: exiting client session")
+
             except MOQTException as e:
                 logger.error(f"MOQT app: session exception: {e}")
                 session.close(e.error_code, e.reason_phrase)
@@ -77,7 +98,20 @@ async def main(host: str, port: int, endpoint: str, namespace: str, track_name: 
     except Exception as e:
         logger.error(f"MOQT app: connection failed: {e}")
         pass
-    
+
+    # # STOP profiling
+    # profiler.disable()
+    # stats = pstats.Stats(profiler)
+    # stats.sort_stats('cumtime')
+    # stats.print_stats(30)  
+    # stats.dump_stats('moqt_profile.prof')
+
+    # current_snapshot = tracemalloc.take_snapshot()
+    # top_stats = current_snapshot.compare_to(start_snapshot, 'lineno')       
+    # logger.info(f"tracemalloc output: {len(top_stats)}")         
+    # for stat in top_stats[:10]:
+    #     logger.info(f"{stat}")
+
     logger.info(f"MOQT app: subscribe session closed: {class_name(client)}")
 
 if __name__ == "__main__":

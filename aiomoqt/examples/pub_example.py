@@ -3,9 +3,15 @@
 import time
 import logging
 import argparse
+import os
+import sys
+
+if os.environ.get("USE_AIOQUIC"):
+    import aioquic as qh3
+    sys.modules["qh3"] = qh3
 
 import asyncio
-from aioquic.h3.connection import H3_ALPN
+from qh3.h3.connection import H3_ALPN
 
 from aiomoqt.types import MOQTMessageType, ParamType, ObjectStatus, MOQTException
 from aiomoqt.messages import (
@@ -18,16 +24,15 @@ from aiomoqt.messages import (
 from aiomoqt.client import *
 from aiomoqt.utils import *
 
-
 # Create fixed padding buffers once
-I_FRAME_PAD = b'I' * 1024 * 50
-P_FRAME_PAD = b'P' * 512 * 5
+I_FRAME_PAD = b'I' * 1024 * 64
+P_FRAME_PAD = b'P' * 1024 * 64
 
-FRAME_INTERVAL = 1/30  # 33ms
-GROUP_SIZE = 30
+FRAME_INTERVAL = 1/30
+GROUP_SIZE = 60
 
 
-async def dgram_subscribe_data_generator(session: MOQTSessionProtocol, msg: Subscribe) -> None:
+async def dgram_subscribe_data_generator(session: MOQTSession, msg: Subscribe) -> None:
     """Wrapper for subscribe handler - spawns stream generators after standard handler"""
     session.default_message_handler(msg.type, msg)  
     logger.debug(f"dgram_subscribe_data_generator: track_alias: {msg.track_alias}")
@@ -45,7 +50,7 @@ async def dgram_subscribe_data_generator(session: MOQTSessionProtocol, msg: Subs
     await asyncio.sleep(150)
     session._close_session()
     
-async def subscribe_data_generator(session: MOQTSessionProtocol, msg: Subscribe) -> None:
+async def subscribe_data_generator(session: MOQTSession, msg: Subscribe) -> None:
     """Wrapper for subscribe handler - spawns stream generators after standard handler"""
     
     session.default_message_handler(msg.type, msg)
@@ -76,10 +81,36 @@ async def subscribe_data_generator(session: MOQTSessionProtocol, msg: Subscribe)
     session._tasks.add(task)
     tasks.append(task)
 
+    # Enhancement layer
+    task = asyncio.create_task(
+        generate_subgroup_stream(
+            session=session,
+            subgroup_id=2,
+            track_alias=msg.track_alias,
+            priority=0  # Lower priority
+        )
+    )
+    task.add_done_callback(lambda t: session._tasks.discard(t))
+    session._tasks.add(task)
+    tasks.append(task)
+
+    # Enhancement layer
+    task = asyncio.create_task(
+        generate_subgroup_stream(
+            session=session,
+            subgroup_id=3,
+            track_alias=msg.track_alias,
+            priority=0  # Lower priority
+        )
+    )
+    task.add_done_callback(lambda t: session._tasks.discard(t))
+    session._tasks.add(task)
+    tasks.append(task)
+
     await session.async_closed()
     session._close_session()
 
-async def generate_group_dgram(session: MOQTSessionProtocol, track_alias: int, priority: int):
+async def generate_group_dgram(session: MOQTSession, track_alias: int, priority: int):
     """Generate a stream of objects simulating video frames"""
     logger = get_logger(__name__)
 
@@ -160,7 +191,7 @@ async def generate_group_dgram(session: MOQTSessionProtocol, track_alias: int, p
         logger.warning(f"MOQT app: stream generation cancelled")
         pass
     
-async def generate_subgroup_stream(session: MOQTSessionProtocol, subgroup_id: int, track_alias: int, priority: int):
+async def generate_subgroup_stream(session: MOQTSession, subgroup_id: int, track_alias: int, priority: int):
     """Generate a stream of objects simulating video frames"""
     logger = get_logger(__name__)
     if session._h3 is None:
@@ -169,7 +200,7 @@ async def generate_subgroup_stream(session: MOQTSessionProtocol, subgroup_id: in
         session_id=session._session_id, 
         is_unidirectional=True
     )
-    logger.info(f"MOQT app: created data stream: group: 0 sub: {subgroup_id} stream: {stream_id}")
+    logger.info(f"MOQT app: created data stream: group: 0 sub: {subgroup_id}stream: {stream_id}")
 
     next_frame_time = time.monotonic()
     object_id = 0
@@ -197,6 +228,14 @@ async def generate_subgroup_stream(session: MOQTSessionProtocol, subgroup_id: in
                     logger.info(f"MOQT app: sending: ObjectHeader END_OF_GROUP: id: {group_id-1}.{subgroup_id}.{object_id} {msg.tell()} bytes")
                     session._quic.send_stream_data(stream_id, msg.data, end_stream=True)
                     session.transmit()
+
+                    if stream_id in session._data_streams:
+                        del session._data_streams[stream_id]
+                    
+                    if stream_id in session._stream_tasks:
+                        session._stream_tasks[stream_id].cancel()
+                        del session._stream_tasks[stream_id]
+
                     # create next group data stream
                     stream_id = session._h3.create_webtransport_stream(
                         session_id=session._session_id,
@@ -250,7 +289,7 @@ async def generate_subgroup_stream(session: MOQTSessionProtocol, subgroup_id: in
 
     except asyncio.CancelledError:
         logger.warning(f"MOQT app: stream generation cancelled")
-        pass
+        raise
 
 def parse_args():
     parser = argparse.ArgumentParser(description='MOQT WebTransport Client')
@@ -271,24 +310,31 @@ async def main(host: str, port: int, endpoint: str, namespace: str, trackname: s
     set_log_level(log_level)
     logger = get_logger(__name__)
 
-    client = MOQTClientSession(
+    client = MOQTClient(
         host,
         port,
         endpoint=endpoint,
         keylog_filename=args.keylogfile,
         debug=debug
     )
+    # Register our data gen version of the subscribe handler
+    if datagram:
+        client.register_handler(MOQTMessageType.SUBSCRIBE, dgram_subscribe_data_generator)
+    else:
+        client.register_handler(MOQTMessageType.SUBSCRIBE, subscribe_data_generator)
+                
     logger.info(f"MOQT app: publish session connecting: {client}")
     async with client.connect() as session:
         try:
-            # Register our data gen version of the subscribe handler
-            if datagram:
-                session.register_handler(MOQTMessageType.SUBSCRIBE, dgram_subscribe_data_generator)
-            else:
-                session.register_handler(MOQTMessageType.SUBSCRIBE, subscribe_data_generator)
-            
+            # # experiment socker options
+            # sock = session._transport.get_extra_info('socket')
+            # current_rcvbuf = sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+            # current_sndbuf = sock.getsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF)
+            # logger.info(f"Current socket buffers - RCVBUF: {current_rcvbuf} bytes, SNDBUF: {current_sndbuf} bytes")
+
             # Complete the MoQT session setup
             await session.client_session_init()
+
             logger.info(f"MOQT app: announce namespace: {namespace}")
             response = await session.announce(
                 namespace=namespace,

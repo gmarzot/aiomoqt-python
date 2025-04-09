@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
-from aioquic.buffer import Buffer
+from qh3.buffer import Buffer
 
 from . import MOQTMessageType, MOQTMessage, BUF_SIZE
 from ..utils.logger import get_logger

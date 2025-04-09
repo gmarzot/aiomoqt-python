@@ -3,16 +3,16 @@ import sys
 import ssl
 from typing import Optional, AsyncContextManager
 
-from aioquic.quic.configuration import QuicConfiguration
-from aioquic.asyncio.client import connect
-from aioquic.h3.connection import H3_ALPN
+from qh3.quic.configuration import QuicConfiguration
+from qh3.asyncio.client import connect
+from qh3.h3.connection import H3_ALPN
 
 from .protocol import *
 from .utils.logger import *
 
 logger = get_logger(__name__)
 
-class MOQTClientSession(MOQTSession):  # New connection manager class
+class MOQTClient(MOQTPeer):  # New connection manager class
     def __init__(
         self,
         host: str,
@@ -22,6 +22,7 @@ class MOQTClientSession(MOQTSession):  # New connection manager class
         keylog_filename: Optional[str] = None,
         debug: Optional[bool] = False,
     ):
+        super().__init__()
         self.host = host
         self.port = port
         self.debug = debug
@@ -32,18 +33,20 @@ class MOQTClientSession(MOQTSession):  # New connection manager class
                 alpn_protocols=H3_ALPN,
                 is_client=True,
                 verify_mode=ssl.CERT_NONE,
-                max_datagram_frame_size=65536,
-                max_datagram_size=QuicConfiguration.max_datagram_size,
+                max_data=2**24,
+                max_stream_data=2**24,
+                max_datagram_frame_size=64*1024,
+                # max_datagram_size=QuicConfiguration.max_datagram_size,
                 quic_logger=QuicDebugLogger() if debug else None,
                 secrets_log_file=keylog_file
             )
         self.configuration = configuration
         logger.debug(f"quic_logger: {class_name(configuration.quic_logger)}")
 
-    def connect(self) -> AsyncContextManager[MOQTSessionProtocol]:
+    def connect(self) -> AsyncContextManager[MOQTSession]:
         """Return a context manager that creates MOQTSessionProtocol instance."""
         logger.debug(f"MOQT: session connect: {self}")
-        protocol = lambda *args, **kwargs: MOQTSessionProtocol(*args, **kwargs, session=self)
+        protocol = lambda *args, **kwargs: MOQTSession(*args, **kwargs, session=self)
         return connect(
             self.host,
             self.port,

@@ -1,7 +1,7 @@
 from typing import Any, Union, Dict
 from dataclasses import dataclass, fields
 
-from aioquic.buffer import Buffer
+from qh3.buffer import Buffer
 
 from . import ParamType, SetupParamType
 from ..utils.logger import *
@@ -62,38 +62,29 @@ class MOQTMessage:
                     buf.push_uint_var(len(ext_value))
                     buf.push_bytes(ext_value)
 
-
+    exts_err_count = 0
     @staticmethod
     def _extensions_decode(buf: Buffer) -> Dict[int, Union[int, bytes]]:
         exts = {}
-        vers = get_moqt_ctx_version()
-        major_version = get_major_version(vers)
-        # logger.debug(f"MOQTMessage._extensions_decode(): {vers} maj: {major_version}")
-        if major_version > 8:
-            exts_len = buf.pull_uint_var()
-            if exts_len > 0:
-                pos = buf.tell()
-                exts_end = pos + exts_len
-                while buf.tell() < exts_end:
-                    ext_id = buf.pull_uint_var()
-                    if ext_id % 2 == 0:  # even extension types are simple var int
-                        ext_value = buf.pull_uint_var()
-                    else:
-                        value_len = buf.pull_uint_var()
-                        ext_value = buf.pull_bytes(value_len)
-                    exts[ext_id] = ext_value
-                assert buf.tell() == exts_end, f"Payload length mismatch: {exts_len} {buf.tell()-pos}"
-        else:
-            exts_len = buf.pull_uint_var()
-            if exts_len > 0:
-                for _ in range(exts_len):
-                    ext_id = buf.pull_uint_var()
-                    if ext_id % 2 == 0:  # even extension types are simple var int
-                        ext_value = buf.pull_uint_var()
-                    else:
-                        value_len = buf.pull_uint_var()
-                        ext_value = buf.pull_bytes(value_len)
-                    exts[ext_id] = ext_value
+        exts_len = buf.pull_uint_var()
+        if exts_len > (1024*16):
+            global exts_err_count
+            exts_err_count += 1
+            logger.warning(f"MOQTMessage._extensions_decode(): corrupted buffer : ext_len: {exts_len} count: {exts_err_count}")
+            return exts
+
+        if exts_len > 0:
+            pos = buf.tell()
+            exts_end = pos + exts_len
+            while buf.tell() < exts_end:
+                ext_id = buf.pull_uint_var()
+                if ext_id % 2 == 0:  # even extension types are simple var int
+                    ext_value = buf.pull_uint_var()
+                else:
+                    value_len = buf.pull_uint_var()
+                    ext_value = buf.pull_bytes(value_len)
+                exts[ext_id] = ext_value
+        # assert buf.tell() == exts_end, f"Payload length mismatch: {exts_len} {buf.tell()-pos}"
 
         return exts
           

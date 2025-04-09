@@ -1,7 +1,6 @@
-import re
+import os
 import time
 
-import contextvars
 from functools import partial
 from collections import defaultdict
 from typing import Optional, Type, Union, List, Set, Tuple, Dict, DefaultDict, Callable
@@ -9,12 +8,12 @@ from typing import Optional, Type, Union, List, Set, Tuple, Dict, DefaultDict, C
 import asyncio
 from asyncio import Future
 
-from aioquic.buffer import Buffer, UINT_VAR_MAX, BufferReadError
-from aioquic.asyncio.protocol import QuicConnectionProtocol
-from aioquic.quic.connection import QuicConnection, QuicErrorCode, stream_is_unidirectional
-from aioquic.quic.events import QuicEvent, StreamDataReceived, ProtocolNegotiated, DatagramFrameReceived
-from aioquic.h3.connection import H3Connection, ErrorCode, H3_ALPN
-from aioquic.h3.events import HeadersReceived
+from qh3.buffer import Buffer, UINT_VAR_MAX, BufferReadError
+from qh3.asyncio.protocol import QuicConnectionProtocol
+from qh3.quic.connection import QuicConnection, QuicErrorCode, stream_is_unidirectional
+from qh3.quic.events import QuicEvent, StreamDataReceived, ProtocolNegotiated, DatagramFrameReceived, StopSendingReceived, StreamReset
+from qh3.h3.connection import H3Connection, StreamType, ErrorCode, H3_ALPN
+from qh3.h3.events import HeadersReceived
 
 from .types import *
 from .context import *
@@ -24,8 +23,7 @@ from .utils.logger import *
 from importlib.metadata import version
 USER_AGENT = f"aiomoqt/{version('aiomoqt')}"
 
-
-MOQT_IDLE_STREAM_TIMEOUT = 30
+MOQT_IDLE_STREAM_TIMEOUT = 5
 
 logger = get_logger(__name__)
     
@@ -33,7 +31,7 @@ logger = get_logger(__name__)
 class H3CustomConnection(H3Connection):
     """Custom H3Connection wrapper to support alternate SETTINGS"""
     
-    def __init__(self, quic: QuicConnection, table_capacity: int = 0, **kwargs) -> None:
+    def __init__(self, quic: QuicConnection, table_capacity: int = 4096, **kwargs) -> None:
         # settings table capacity can be overridden - this should be generalized
         self._max_table_capacity = table_capacity
         self._max_table_capacity_cfg = table_capacity
@@ -56,17 +54,26 @@ class H3CustomConnection(H3Connection):
     
     
 # base class for client and server session objects
-class MOQTSession:
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError()
+class MOQTPeer:
+    """MOQT client and server base-class."""
+    def __init__(self):
+        #  message handlers
+        self._control_msg_handlers: Dict[int, Tuple[Type, Callable]] = {}
+
+    def register_handler(self, msg_type: int, handler: Callable) -> None:
+        """Register a custom message handler."""
+        (msg_class, _) = MOQTSession.MOQT_CONTROL_MESSAGE_REGISTRY[msg_type]
+        self._control_msg_handlers[msg_type] = (msg_class, handler)
+        
 
 
-class MOQTSessionProtocol(QuicConnectionProtocol):
+
+class MOQTSession(QuicConnectionProtocol):
     """MOQT session protocol implementation."""
 
-    def __init__(self, *args, session: 'MOQTSession', **kwargs):
+    def __init__(self, *args, session: 'MOQTPeer', **kwargs):
         super().__init__(*args, **kwargs)
-        self._session: MOQTSession = session  # backref to session object with config
+        self._session: MOQTPeer = session  # backref to session object with config
         self._h3: Optional[H3Connection] = None
         self._session_id: Optional[int] = None
         self._control_stream_id: Optional[int] = None
@@ -89,11 +96,15 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         self._subscribe_announces_responses: Dict[int, Future[MOQTMessage]] = {}
         self._subscribe_responses: Dict[int, Future[MOQTMessage]] = {}
         self._unsubscribe_responses: Dict[int, Future[MOQTMessage]] = {}
-        self._fetch_responses: Dict[int, Future[MOQTMessage]] = {}
+        self._fetch_responses: Dict[int, Future[MOQTMessage]] = {} 
         
-        self._control_msg_registry = dict(MOQTSessionProtocol.MOQT_CONTROL_MESSAGE_REGISTRY)
-        self._stream_data_registry = dict(MOQTSessionProtocol.MOQT_STREAM_DATA_REGISTRY)
-        self._dgram_data_registry = dict(MOQTSessionProtocol.MOQT_DGRAM_DATA_REGISTRY)
+        self._control_msg_registry = dict(MOQTSession.MOQT_CONTROL_MESSAGE_REGISTRY)
+        self._control_msg_registry.update(session._control_msg_handlers)
+
+        self._stream_data_registry = dict(MOQTSession.MOQT_STREAM_DATA_REGISTRY)
+        self._dgram_data_registry = dict(MOQTSession.MOQT_DGRAM_DATA_REGISTRY)
+    
+        
 
     async def __aexit__(self, exc_type, exc, tb):
         # Clean up the context when the session exits
@@ -144,9 +155,9 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
             path = path.decode('utf-8')
             
         # Strip trailing slashes
-        endpoint = endpoint.rstrip('/')
-        path = path.rstrip('/')
-        
+        endpoint = endpoint.strip('/')
+        path = path.strip('/')
+        logger.debug(f"H3 event: endpoint: {endpoint} path: {path}")
         return endpoint == path
             
     def _moqt_handle_control_message(self, buf: Buffer) -> Optional[MOQTMessage]:
@@ -198,21 +209,33 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
             raise
  
     def _stream_task_done(self, stream_id: int, task: asyncio.Task) -> None:
-        """Remove stream task from dict."""
-        if stream_id in self._stream_tasks:
-            del self._stream_tasks[stream_id]
-        else:
-            logger.error(f"MOQT error: _stream_task_done: stream does not exist: {stream_id}")
+        logger.info(f"MOQT stream({stream_id}): stream task done: num stream tasks: {len(self._stream_tasks)}")
+
+        if self._stream_tasks.pop(stream_id, None) is None:
+            logger.error(f"MOQT stream({stream_id}): _stream_task_done error: stream task does not exist")
+
+        if stream_id not in self._data_streams:
+            logger.error(f"MOQT stream({stream_id}): _stream_task_done error: stream does not exist")
+
+        error_code = QuicErrorCode.NO_ERROR
         if task.cancelled():
-            logger.warning("MOQT warn: stream task cancelled")
+            error_code = QuicErrorCode.APPLICATION_ERROR
+            logger.warning(f"MOQT stream({stream_id}): task cancelled")
         else:
             e = task.exception()
-            if e: logger.error(f"MOQT error: stream task failed with exception: {e}")
+            if e:
+                error_code = QuicErrorCode.APPLICATION_ERROR
+                logger.error(f"MOQT stream({stream_id}): task failed with exception: {type(e).__name__}")
+            else:
+                logger.debug(f"MOQT stream({stream_id}): task completed")
+                
+        # if stream_id in self._quic._streams and self._quic._streams[stream_id].receiver is not None:
+        #     self._quic._streams[stream_id].receiver.stop(error_code=error_code)
  
-    # task for processing data streams
+    # task for processing incoming data streams
     async def _process_data_stream(self, stream_id: int) -> None:
         ''' Subgroup stream data processing task '''
-        re_buf = Buffer(capacity=(1024*1024*2))  # pre-allocate large buffer accumulator
+        re_buf = Buffer(capacity=(1024*1024*4))  # pre-allocate large buffer accumulator
         cur_pos: int = 0
         consumed: int = 0
         needed: int = 0
@@ -224,7 +247,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                 while True:
                     async with asyncio.timeout(MOQT_IDLE_STREAM_TIMEOUT):
                         msg_buf = await self._stream_queues[stream_id].get()
-                        
+
                     if msg_buf is None:  # Sentinel done value - return
                         logger.debug(f"MOQT stream({stream_id}): queue closed: task shutdown")
                         return
@@ -245,7 +268,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                         
             except asyncio.TimeoutError:
                 logger.warning(f"MOQT stream({stream_id}): idle timeout: {group_id}.{subgroup_id}.{object_id}")
-                return
+                raise
             
             # if more data was needed, add it to re_buf accumulator and reprocess
             if needed > 0:
@@ -256,7 +279,6 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                 cur_pos = 0
                 needed = 0
                 
-
             while cur_pos < msg_len:
                 logger.debug(f"MOQT stream({stream_id}): process message: pos: {cur_pos} len: {msg_len}")
                 msg_obj = None
@@ -427,7 +449,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
     def connection_made(self, transport):
         """Called when QUIC connection is established."""
         super().connection_made(transport)
-        self._h3 = H3CustomConnection(self._quic, table_capacity=4096, enable_webtransport=True)
+        self._h3 = H3CustomConnection(self._quic, enable_webtransport=True)
         logger.info("H3 connection initialized")
 
     # primary event handling for all QUIC messaging
@@ -444,14 +466,18 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
             self._close_session(error, reason)
             return
         
-        # data_len = len(event.data) if hasattr(event, 'data') else 0
-        # logger.debug(f"QUIC event: {event_class}: len: {data_len} bytes")
+        data_len = len(event.data) if hasattr(event, 'data') else 0
+        data = "<none>"
+        if data_len > 0:
+            data = event.data.hex()
+            
+        logger.debug(f"QUIC event: {event_class}: len: {data_len} bytes data: {data}")
         
         if isinstance(event, ProtocolNegotiated):
             # Enforce supported ALPN
             if event.alpn_protocol in H3_ALPN:
                 logger.debug(f"QUIC event: ALPN ProtocolNegotiated: {event.alpn_protocol}")
-            elif event.alpn_protocol == "moq-00":
+            elif event.alpn_protocol == MOQT_ALPN_PROTO:
                 # XXX - handle QUIC connection
                 logger.debug(f"QUIC event: ALPN ProtocolNegotiated alpn: {event.alpn_protocol}")
             else:
@@ -479,7 +505,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
             
             msg_buf = Buffer(data=event.data)
             msg_len = msg_buf.capacity
-            # logger.debug(f"MOQT event: StreamDataReceived: stream: {stream_id} (0x{msg_buf.data_slice(0, min(msg_len,16)).hex()}...)")
+            logger.debug(f"MOQT event: StreamDataReceived: stream: {stream_id} len: {msg_len}")
             
             # Handle possible MoQT control stream 
             if not stream_is_unidirectional(stream_id):
@@ -507,8 +533,17 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                 return
 
             # Handle MoQT data messages
-            if stream_is_unidirectional(stream_id):
+            is_quic_internal = stream_id in self._h3._stream and self._h3._stream[stream_id].stream_type in (
+                StreamType.CONTROL,
+                StreamType.QPACK_ENCODER,
+                StreamType.QPACK_DECODER,
+            )
+            if is_quic_internal:
+                logger.debug(f"MOQT event: stream type internal: {self._h3._stream[stream_id].stream_type}")
+
+            if stream_is_unidirectional(stream_id) and not is_quic_internal:
                 if stream_id not in self._data_streams:
+                    logger.debug(f"MOQT event: ")
                     # strip of initial H3/WT stream identifier
                     msg_buf.pull_uint_var()
                     msg_buf.pull_uint_var()
@@ -519,7 +554,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                     task = asyncio.create_task(self._process_data_stream(stream_id))
                     self._stream_tasks[stream_id] = task
                     task.add_done_callback(partial(self._stream_task_done, stream_id))
-                    logger.debug(f"MOQT event: creating _process_data_stream task: {stream_id}")
+                    logger.info(f"MOQT event: creating _process_data_stream task: {stream_id} num streams: {len(self._data_streams)}")
                     
                 # Queue the event data buffer for processing
                 if msg_buf.tell() < msg_len:
@@ -527,7 +562,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
                     self._stream_queues[stream_id].put_nowait(msg_buf)
                 else:
                     logger.debug(f"MOQT event: skipping empty data: {stream_id} pos: {msg_buf.tell()} len: {msg_len}")
-                    
+
                 return
 
         elif isinstance(event, DatagramFrameReceived) and self._wt_session_setup.done():
@@ -538,12 +573,34 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
             msg_buf.pull_uint_var()
             self._moqt_handle_data_dgram(msg_buf)
             return
-                      
+        elif isinstance(event, StopSendingReceived):
+            logger.debug(f"MOQT event: StopSendingReceived: ")
+            self._quic.reset_stream(stream_id=stream_id,error_code=event.error_code)
+            if event.stream_id in self._data_streams:
+                del self._data_streams[event.stream_id]
+            if event.stream_id in self._stream_tasks:
+                self._stream_tasks[event.stream_id].cancel()
+                del self._stream_tasks[event.stream_id]
+            return
+        elif isinstance(event, StreamReset):
+            logger.debug(f"MOQT event: StreamReset: ")
+            if event.stream_id in self._data_streams:
+                del self._data_streams[event.stream_id]
+            
+            if event.stream_id in self._stream_tasks:
+                self._stream_tasks[event.stream_id].cancel()
+                del self._stream_tasks[event.stream_id]
+            return
+
         # Pass remaining events to H3
         if self._h3 is not None:
             settings = self._h3.received_settings
             try:
+                logger.debug(f"MOQT event: h3 processing: {event_class} len: {data_len}")
+                if hasattr(event, "stream_id"):
+                    logger.debug(f"MOQT event: H3 stream: {event.stream_id} {stream_is_unidirectional(event.stream_id)}")
                 for h3_event in self._h3.handle_event(event):
+                    logger.debug(f"MOQT event: h3 processing: {h3_event.__class__.__name__}")
                     self._h3_handle_event(h3_event)
                 # Check if settings just received
                 if self._h3.received_settings != settings:
@@ -560,7 +617,7 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
   
     def _h3_handle_event(self, event: QuicEvent) -> None:
         """Handle H3-specific events."""
-        logger.debug(f"H3 event: {event}")
+        logger.debug(f"H3 event: _h3_handle_event {event}")
         if isinstance(event, HeadersReceived):
             return self._h3_handle_headers_received(event)
         msg_class = class_name(event)
@@ -686,7 +743,8 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         if not self._moqt_session_closed.done():
             self._moqt_session_closed.set_result((error_code, reason_phrase))
         # call parent close and transmit all
-        super().close(error_code=error_code, reason_phrase=reason_phrase)
+        #super().close(error_code=error_code, reason_phrase=reason_phrase)
+        super().close()
         self.transmit()
         
     async def async_closed(self) -> bool:
@@ -699,15 +757,16 @@ class MOQTSessionProtocol(QuicConnectionProtocol):
         """Initialize WebTransport and MoQT client session."""
         # Create WebTransport session
         self._session_id = self._h3._quic.get_next_available_stream_id(is_unidirectional=False)
-
+        host = self._session.host
+        port = self._session.port
         headers = [
             (b":method", b"CONNECT"),
-            (b":protocol", b"webtransport"),
             (b":scheme", b"https"),
-            (b":authority",
-             f"{self._session.host}:{self._session.port}".encode()),
+            (b":authority", f"{host}:{port}".encode()),
             (b":path", f"/{self._session.endpoint}".encode()),
+            (b":protocol", b"webtransport"),
             (b"sec-webtransport-http3-draft", b"draft02"),
+            (b"wt-available-protocols", MOQT_ALPN_PROTO.encode()),
             (b"user-agent", USER_AGENT.encode()),
         ]
 
