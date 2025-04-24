@@ -1,4 +1,3 @@
-import os
 import time
 
 from functools import partial
@@ -8,7 +7,6 @@ from typing import Optional, Type, Union, List, Set, Tuple, Dict, DefaultDict, C
 import asyncio
 from asyncio import Future
 
-from qh3.buffer import Buffer, UINT_VAR_MAX, BufferReadError
 from qh3.asyncio.protocol import QuicConnectionProtocol
 from qh3.quic.connection import QuicConnection, QuicErrorCode, stream_is_unidirectional
 from qh3.quic.events import QuicEvent, StreamDataReceived, ProtocolNegotiated, DatagramFrameReceived, StopSendingReceived, StreamReset
@@ -19,6 +17,7 @@ from .types import *
 from .context import *
 from .messages import *
 from .utils.logger import *
+from .utils.buffer import Buffer, BufferReadError
 
 from importlib.metadata import version
 USER_AGENT = f"aiomoqt/{version('aiomoqt')}"
@@ -235,7 +234,7 @@ class MOQTSession(QuicConnectionProtocol):
     # task for processing incoming data streams
     async def _process_data_stream(self, stream_id: int) -> None:
         ''' Subgroup stream data processing task '''
-        re_buf = Buffer(capacity=(1024*1024*4))  # pre-allocate large buffer accumulator
+        re_buf = Buffer(capacity=(1024*1024*8))  # pre-allocate large buffer accumulator
         cur_pos: int = 0
         consumed: int = 0
         needed: int = 0
@@ -543,10 +542,14 @@ class MOQTSession(QuicConnectionProtocol):
 
             if stream_is_unidirectional(stream_id) and not is_quic_internal:
                 if stream_id not in self._data_streams:
-                    logger.debug(f"MOQT event: ")
+                    logger.debug(f"MOQT event: new data stream: id: {stream_id} {msg_len} bytes")
                     # strip of initial H3/WT stream identifier
-                    msg_buf.pull_uint_var()
-                    msg_buf.pull_uint_var()
+                    try:
+                        msg_buf.pull_uint_var()
+                        msg_buf.pull_uint_var()
+                    except BufferReadError:
+                        logger.error(f"MOQT error: data stream({stream_id}) parse fail at: {msg_buf.tell()}")
+                        return
                     # record the stream exists and stream id stripped
                     self._data_streams[stream_id] = None
                     # create a handler task for this stream

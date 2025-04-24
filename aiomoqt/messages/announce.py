@@ -1,12 +1,12 @@
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
-from qh3.buffer import Buffer
-
 from . import MOQTMessageType, MOQTMessage, BUF_SIZE
+from ..utils.buffer import Buffer, BufferReadError
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
+
 
 @dataclass
 class Announce(MOQTMessage):

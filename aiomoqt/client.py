@@ -1,5 +1,4 @@
-import os
-import sys
+
 import ssl
 from typing import Optional, AsyncContextManager
 
@@ -21,6 +20,7 @@ class MOQTClient(MOQTPeer):  # New connection manager class
         configuration: Optional[QuicConfiguration] = None,
         keylog_filename: Optional[str] = None,
         debug: Optional[bool] = False,
+        quic_debug: Optional[bool] = False,
     ):
         super().__init__()
         self.host = host
@@ -36,12 +36,10 @@ class MOQTClient(MOQTPeer):  # New connection manager class
                 max_data=2**24,
                 max_stream_data=2**24,
                 max_datagram_frame_size=64*1024,
-                # max_datagram_size=QuicConfiguration.max_datagram_size,
-                quic_logger=QuicDebugLogger() if debug else None,
+                quic_logger=QuicDebugLogger() if quic_debug else None,
                 secrets_log_file=keylog_file
             )
         self.configuration = configuration
-        logger.debug(f"quic_logger: {class_name(configuration.quic_logger)}")
 
     def connect(self) -> AsyncContextManager[MOQTSession]:
         """Return a context manager that creates MOQTSessionProtocol instance."""

@@ -1,8 +1,9 @@
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Tuple
-from qh3.buffer import Buffer
+
 from .base import MOQTMessage, BUF_SIZE
 from ..types import *
+from ..utils.buffer import Buffer, BufferReadError
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)

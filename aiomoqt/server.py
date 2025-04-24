@@ -24,7 +24,9 @@ class MOQTServer(MOQTPeer):
         endpoint: Optional[str] = "moq",
         congestion_control_algorithm: Optional[str] = 'reno',
         configuration: Optional[QuicConfiguration] = None,
-        debug: bool = False
+        keylog_filename: Optional[str] = None,
+        debug: Optional[bool] = False,
+        quic_debug: Optional[bool] = False,
     ):
         super().__init__()
         self.host = host
@@ -35,6 +37,8 @@ class MOQTServer(MOQTPeer):
         self._server_closed:Future[Tuple[int,str]] = self._loop.create_future()
         self._next_subscribe_id = 1  # prime subscribe id generator
 
+        keylog_file = open(keylog_filename, 'a') if keylog_filename else None
+
         if configuration is None:
             configuration = QuicConfiguration(
                 is_client=False,
@@ -42,17 +46,15 @@ class MOQTServer(MOQTPeer):
                 verify_mode=ssl.CERT_NONE,
                 certificate=certificate,
                 private_key=private_key,
-                max_datagram_frame_size=65536,
-                max_data=1024*1024*8,
-                max_stream_data=1024*1024*4,
-                quic_logger=QuicDebugLogger() if debug else None,
-                secrets_log_file=open("/tmp/keylog.server.txt", "a") if debug else None
+                max_data=2**24,
+                max_stream_data=2**24,
+                max_datagram_frame_size=64*1024,
+                quic_logger=QuicDebugLogger() if quic_debug else None,
+                secrets_log_file=keylog_file if keylog_file else None
             )        
         # load SSL certificate and key
         configuration.load_cert_chain(certificate, private_key)
-        
         self.configuration = configuration
-        logger.debug(f"quic_logger: {class_name(configuration.quic_logger)}")
 
     def serve(self) -> Coroutine[Any, Any, QuicServer]:
         """Start the MOQT server."""

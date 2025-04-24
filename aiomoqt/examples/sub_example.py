@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-import cProfile
-import pstats
-import io
-from functools import wraps
-import os
-import sys
-
-if os.environ.get("USE_AIOQUIC"):
-    import aioquic as qh3
-    sys.modules["qh3"] = qh3
 
 import asyncio
 import argparse
@@ -31,21 +21,15 @@ def parse_args():
     parser.add_argument('--trackname', type=str, default="track", help='Track Name')
     parser.add_argument('--endpoint', type=str, default="moq", help='MOQT WT endpoint')
     parser.add_argument('--debug', action='store_true', help='Enable debug output')
+    parser.add_argument('--quic-debug', action='store_true',  help='Enable quic debug output')
     parser.add_argument('--keylogfile', type=str, default=None, help='TLS secrets file')
+    
     return parser.parse_args()
 
 async def main(host: str, port: int, endpoint: str, namespace: str, track_name: str, debug: bool):
     log_level = logging.DEBUG if debug else logging.INFO
     set_log_level(log_level)
     logger = get_logger(__name__)
-
-    # Start memory tracking
-    # import tracemalloc
-    # tracemalloc.start()
-    # start_snapshot = tracemalloc.take_snapshot()
-    # # Start profiling right before entering the context manager
-    # profiler = cProfile.Profile()
-    # profiler.enable()
 
     client = MOQTClient(
         host,
@@ -98,19 +82,6 @@ async def main(host: str, port: int, endpoint: str, namespace: str, track_name: 
     except Exception as e:
         logger.error(f"MOQT app: connection failed: {e}")
         pass
-
-    # # STOP profiling
-    # profiler.disable()
-    # stats = pstats.Stats(profiler)
-    # stats.sort_stats('cumtime')
-    # stats.print_stats(30)  
-    # stats.dump_stats('moqt_profile.prof')
-
-    # current_snapshot = tracemalloc.take_snapshot()
-    # top_stats = current_snapshot.compare_to(start_snapshot, 'lineno')       
-    # logger.info(f"tracemalloc output: {len(top_stats)}")         
-    # for stat in top_stats[:10]:
-    #     logger.info(f"{stat}")
 
     logger.info(f"MOQT app: subscribe session closed: {class_name(client)}")
 

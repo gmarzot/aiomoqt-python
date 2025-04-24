@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-
-import time
-import logging
 import argparse
-import os
-import sys
-
-if os.environ.get("USE_AIOQUIC"):
-    import aioquic as qh3
-    sys.modules["qh3"] = qh3
-
 import asyncio
 from qh3.h3.connection import H3_ALPN
 
@@ -25,10 +15,12 @@ from aiomoqt.client import *
 from aiomoqt.utils import *
 
 # Create fixed padding buffers once
+NUM_SUBGROUP_TASKS = 4
+# Create fixed padding buffers once
 I_FRAME_PAD = b'I' * 1024 * 64
 P_FRAME_PAD = b'P' * 1024 * 64
 
-FRAME_INTERVAL = 1/30
+FRAME_INTERVAL = 1/60 
 GROUP_SIZE = 60
 
 
@@ -50,62 +42,32 @@ async def dgram_subscribe_data_generator(session: MOQTSession, msg: Subscribe) -
     await asyncio.sleep(150)
     session._close_session()
     
-async def subscribe_data_generator(session: MOQTSession, msg: Subscribe) -> None:
-    """Wrapper for subscribe handler - spawns stream generators after standard handler"""
+async def subscribe_data_generator(session: MOQTSession, msg: Subscribe, num_tasks: int = NUM_SUBGROUP_TASKS) -> None:
+    """Wrapper for subscribe handler - spawns stream generators after standard handler
+    
+    Args:
+        session: The MOQT session to use
+        msg: The Subscribe message
+        num_tasks: Number of subgroup stream tasks to create
+    """
     
     session.default_message_handler(msg.type, msg)
-
-    tasks = []
-    # Base layer 
-    task = asyncio.create_task(
-    generate_subgroup_stream(
-            session=session,
-            subgroup_id=0,
-            track_alias=msg.track_alias,
-            priority=255  # High priority
+    
+    # Create the specified number of tasks
+    for subgroup_id in range(num_tasks):
+        # Base layer has high priority, enhancement layers have lower priority
+        priority = 255 if subgroup_id == 0 else 0
+        
+        task = asyncio.create_task(
+            generate_subgroup_stream(
+                session=session,
+                subgroup_id=subgroup_id,
+                track_alias=msg.track_alias,
+                priority=priority
+            )
         )
-    )
-    task.add_done_callback(lambda t: session._tasks.discard(t))
-    session._tasks.add(task)
-    tasks.append(task)
-    # Enhancement layer
-    task = asyncio.create_task(
-        generate_subgroup_stream(
-            session=session,
-            subgroup_id=1,
-            track_alias=msg.track_alias,
-            priority=0  # Lower priority
-        )
-    )
-    task.add_done_callback(lambda t: session._tasks.discard(t))
-    session._tasks.add(task)
-    tasks.append(task)
-
-    # Enhancement layer
-    task = asyncio.create_task(
-        generate_subgroup_stream(
-            session=session,
-            subgroup_id=2,
-            track_alias=msg.track_alias,
-            priority=0  # Lower priority
-        )
-    )
-    task.add_done_callback(lambda t: session._tasks.discard(t))
-    session._tasks.add(task)
-    tasks.append(task)
-
-    # Enhancement layer
-    task = asyncio.create_task(
-        generate_subgroup_stream(
-            session=session,
-            subgroup_id=3,
-            track_alias=msg.track_alias,
-            priority=0  # Lower priority
-        )
-    )
-    task.add_done_callback(lambda t: session._tasks.discard(t))
-    session._tasks.add(task)
-    tasks.append(task)
+        task.add_done_callback(lambda t: session._tasks.discard(t))
+        session._tasks.add(task)
 
     await session.async_closed()
     session._close_session()
@@ -200,8 +162,11 @@ async def generate_subgroup_stream(session: MOQTSession, subgroup_id: int, track
         session_id=session._session_id, 
         is_unidirectional=True
     )
-    logger.info(f"MOQT app: created data stream: group: 0 sub: {subgroup_id}stream: {stream_id}")
+    logger.info(f"MOQT app: created data stream({stream_id}): sub-group: {subgroup_id}")
 
+    # Pre-allocate common extension keys to avoid dictionary creation overhead
+    moqt_ts_ext = MOQT_TIMESTAMP_EXT
+    extensions={MOQT_TIMESTAMP_EXT: None}
     next_frame_time = time.monotonic()
     object_id = 0
     group_id = -1
@@ -211,15 +176,12 @@ async def generate_subgroup_stream(session: MOQTSession, subgroup_id: int, track
             if (object_id % GROUP_SIZE) == 0:
                 group_id += 1
                 if group_id > 0:
+                    extensions[moqt_ts_ext] = int(time.time()*1000)
                     status = ObjectStatus.END_OF_GROUP
                     header = ObjectHeader(
                         object_id=object_id,
                         status=status,
-                        extensions={
-                            0: 4207849484,
-                            0x25: f"MOQT-TS: {int(time.time()*1000)}",
-                            MOQT_TIMESTAMP_EXT: int(time.time()*1000)
-                        }
+                        extensions=extensions
                     )
                     msg = header.serialize()
                     logger.debug(f"MOQT app: sending object status: {header} Ox{msg.data.hex()}")
@@ -266,7 +228,7 @@ async def generate_subgroup_stream(session: MOQTSession, subgroup_id: int, track
                 info = f"| {group_id}.{subgroup_id}.{object_id} |".encode()
                 payload = info + P_FRAME_PAD    
                 
-            extensions = {MOQT_TIMESTAMP_EXT: int(time.time()*1000)}
+            extensions = {moqt_ts_ext: int(time.time()*1000)}
                 
             obj = ObjectHeader(
                 object_id=object_id,
@@ -299,9 +261,10 @@ def parse_args():
     parser.add_argument('--trackname', type=str, default='track', help='Track')
     parser.add_argument('--endpoint', type=str, default='moq', help='MOQT WT endpoint')
     parser.add_argument('--datagram', action='store_true', help='Emit ObjectDatagrams')
+    parser.add_argument('--debug', action='store_true', help='Enable debug output')
+    parser.add_argument('--quic-debug', action='store_true',  help='Enable quic debug output')
     parser.add_argument('--keylogfile', type=str, default=None, help='TLS secrets file')
-    parser.add_argument('--debug', action='store_true',
-                        help='Enable debug output')
+                       
     return parser.parse_args()
 
 

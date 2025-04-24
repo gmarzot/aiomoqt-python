@@ -7,7 +7,7 @@ import asyncio
 from qh3.h3.connection import H3_ALPN
 
 from qh3.quic.configuration import QuicConfiguration
-from aiomoqt.server import MOQTServer, serve
+from aiomoqt.server import MOQTServer
 from aiomoqt.utils.logger import get_logger, set_log_level
 
 def parse_args():
@@ -19,9 +19,11 @@ def parse_args():
     parser.add_argument('--certificate', type=str, required=True, help='TLS server certificate')
     parser.add_argument('--private-key', type=str, required=True, help='TLS private key')
     parser.add_argument('--endpoint', type=str, default="moq", help='MOQT WebTransport endpoint')
-    parser.add_argument('--keylogfile', type=str, default=None, help='TLS secrets file')
     parser.add_argument('--retry', action='store_true', help='send a retry for new connections')
-    parser.add_argument('--debug', action='store_true', help='debug logging verbosity')
+    parser.add_argument('--debug', action='store_true', help='Enable debug output')
+    parser.add_argument('--quic-debug', action='store_true',  help='Enable quic debug output')
+    parser.add_argument('--keylogfile', type=str, default=None, help='TLS secrets file')
+    
     return parser.parse_args()
 
 async def main(args):

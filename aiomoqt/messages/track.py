@@ -4,9 +4,8 @@ from sortedcontainers import SortedDict
 from typing import Optional, Dict, List, Tuple, Union
 import time
 
-from qh3.buffer import Buffer, BufferReadError
-
 from . import MOQTUnderflow, MOQTMessage, ObjectStatus, DataStreamType, DatagramType, MOQT_DEFAULT_PRIORITY, BUF_SIZE
+from ..utils.buffer import Buffer, BufferReadError
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
