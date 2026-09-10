@@ -8,6 +8,9 @@ audio, plus video from an mp4) to a relay.
   # audio + H.264 video lifted from an mp4 (no re-encode)
   %(prog)s https://relay.example/moq-relay -N demo/live --mp4 clip.mp4
 
+  # relays that ignore bare PUBLISH: announce the namespace instead
+  %(prog)s https://relay.example/ -N demo/live --mp4 clip.mp4 --pub-ns
+
 The video track sends the mp4's samples byte-for-byte as LOC canonical
 payloads (loc-02 §2.1.3); the avcC extradata rides the catalog
 initDataList and VIDEO_CONFIG group-start properties. Frames pace to
@@ -32,6 +35,7 @@ from aiomoqt.media.sources import (
     AnnexBAssembler, Mp4Reader, avcc_codec_string, pcm_tone_frames,
     sps_dimensions,
 )
+from aiomoqt.track import TrackState
 from aiomoqt.utils import cli as _cli
 from aiomoqt.utils.logger import set_log_level
 from aiomoqt.utils.url import parse_relay_url
@@ -85,6 +89,28 @@ def parse_args():
                         help='Also emit timestamps under loc-01\'s '
                              'property id 0x02 for players not yet on '
                              'loc-02 numbering (moq-playa)')
+    pub_mode = parser.add_mutually_exclusive_group()
+    pub_mode.add_argument('--pub-ns', action='store_true',
+                          help='PUBLISH_NAMESPACE only; the relay forwards '
+                               'each SUBSCRIBE and objects start on its '
+                               'Forward State. Default: bare PUBLISH per '
+                               'track (see --forward).')
+    pub_mode.add_argument('--pub-both', action='store_true',
+                          help='PUBLISH_NAMESPACE plus per-track PUBLISH '
+                               '(relays that want both)')
+    parser.add_argument('--forward', type=int, default=0, choices=(0, 1),
+                        help='Initial Forward State in PUBLISH (§9.13). '
+                             '0 (default): send nothing until PUBLISH_OK, '
+                             'SUBSCRIBE or an update carries forward=1. '
+                             '1: start right after PUBLISH.')
+    parser.add_argument('--catalog-interval', type=float, default=0,
+                        metavar='SECS',
+                        help='Re-emit the full catalog as a new group every '
+                             'SECS seconds so the track stays live (0 = '
+                             'once at start; default)')
+    parser.add_argument('--stats', type=float, default=5.0, metavar='SECS',
+                        help='Print per-track publish metrics every SECS '
+                             'seconds (0 disables; default: 5)')
     _cli.add_run(parser, duration=30, interval=False)
     _cli.add_session(parser, keepalive=True)
     _cli.add_help(parser)
@@ -163,15 +189,14 @@ def _open_live_h264(args):
     return fh, asm, first, _LiveH264(asm)
 
 
-async def _feed_h264_live(track, fh, asm, first, args):
+async def _feed_h264_live(track, fh, asm, first, args, stats):
     loop = asyncio.get_running_loop()
     deadline = time.monotonic() + args.duration
     frames = list(first)
     eof = False
     while True:
         for payload, key in frames:
-            await track.send_frame(payload, key_frame=key,
-                                   timestamp=int(time.time() * 1_000_000))
+            await _send(track, stats, payload, key)
         if eof or time.monotonic() >= deadline:
             break
         chunk = await loop.run_in_executor(None, fh.read, 65536)
@@ -189,27 +214,89 @@ async def _pace(start: float, ts_us: int, pace: bool):
             await asyncio.sleep(delay)
 
 
-async def _feed_tone(track, args, epoch_us: int):
+async def _send(track, stats, payload: bytes, key: bool):
+    """Send one frame stamped with the wall clock, or drop it while no
+    subscriber has started generation: a paced feeder stays on the
+    clock instead of queueing a backlog for a late joiner.
+
+    LOC timestamps without a TIMESCALE property are µs since the Unix
+    epoch — players schedule against the wall clock, and a paced live
+    publisher's capture time is its send time."""
+    if track.state != TrackState.SUBSCRIBED:
+        stats.dropped += 1
+        return
+    await track.send_frame(payload, key_frame=key,
+                           timestamp=int(time.time() * 1_000_000))
+    stats.count(payload)
+
+
+class _TrackStats:
+    """Publish-side counters: objects and bytes for the interval rate and
+    bitrate, dropped for frames skipped before a subscriber arrived."""
+    __slots__ = ('objects', 'bytes', 'dropped')
+
+    def __init__(self):
+        self.objects = 0
+        self.bytes = 0
+        self.dropped = 0
+
+    def count(self, payload: bytes):
+        self.objects += 1
+        self.bytes += len(payload)
+
+
+async def _refresh_catalog(pub: MediaPublisher, interval: float):
+    """Periodically re-emit the current catalog as a new group, once a
+    subscriber has started the catalog generator."""
+    track = pub.catalog_track
+    while True:
+        await asyncio.sleep(interval)
+        if track.state != TrackState.SUBSCRIBED:
+            continue
+        track.catalog.generatedAt = int(time.time() * 1000)
+        await track.publish_catalog(track.catalog)
+
+
+async def _report_stats(stats: dict, interval: float):
+    """One line per interval: per-track object total, object rate and
+    bitrate over the interval, plus frames dropped before a subscriber
+    arrived."""
+    t0 = time.monotonic()
+    prev_obj = {name: 0 for name in stats}
+    prev_bytes = {name: 0 for name in stats}
+    while True:
+        await asyncio.sleep(interval)
+        parts = []
+        for name, st in stats.items():
+            ops = (st.objects - prev_obj[name]) / interval
+            kbps = (st.bytes - prev_bytes[name]) * 8 / interval / 1000
+            prev_obj[name] = st.objects
+            prev_bytes[name] = st.bytes
+            parts.append(
+                f"{name}: {st.objects} obj · {ops:.0f} obj/s · {kbps:.0f} kbps"
+                + (f" · dropped {st.dropped}" if st.dropped else ""))
+        el = int(time.monotonic() - t0)
+        print(f"  [pub {el // 60}:{el % 60:02d}] " + " · ".join(parts))
+
+
+async def _feed_tone(track, args, stats: _TrackStats):
     start = time.monotonic()
     for payload, ts in pcm_tone_frames(
             duration_s=args.duration, freq=args.freq,
             samplerate=_SAMPLERATE, channels=_CHANNELS,
             frame_ms=_FRAME_MS):
         await _pace(start, ts, not args.no_pace)
-        # LOC timestamps without a TIMESCALE property are µs since the
-        # Unix epoch — players schedule against the wall clock.
-        await track.send_frame(payload, key_frame=True,
-                               timestamp=epoch_us + ts)
+        await _send(track, stats, payload, True)
     await track.finish()
 
 
-async def _feed_mp4_track(track, source, args, epoch_us: int, *,
+async def _feed_mp4_track(track, source, args, stats: _TrackStats, *,
                           all_key=False, gap_us=33_333, wrap=None):
     """Feed an mp4 track's samples, paced to their media timestamps and
-    stamped as wall-clock µs (LOC default clock); --loop restarts the
-    file at later timestamps (audio: every AU is a sync frame, giving
-    LOC's one-object-per-group audio mapping). wrap(sample) transforms
-    the payload (CMAF chunking)."""
+    stamped with the wall clock at send (LOC default clock); --loop
+    restarts the file at later timestamps (audio: every AU is a sync
+    frame, giving LOC's one-object-per-group audio mapping).
+    wrap(sample) transforms the payload (CMAF chunking)."""
     start = time.monotonic()
     base_us = 0
     while True:
@@ -219,9 +306,9 @@ async def _feed_mp4_track(track, source, args, epoch_us: int, *,
             if ts > args.duration * 1_000_000:
                 break
             await _pace(start, ts, not args.no_pace)
-            await track.send_frame(wrap(s) if wrap else s.payload,
-                                   key_frame=all_key or s.key_frame,
-                                   timestamp=epoch_us + ts)
+            payload = wrap(s) if wrap else s.payload
+            key = all_key or s.key_frame
+            await _send(track, stats, payload, key)
             last = ts
         base_us = last + gap_us
         if not args.loop or base_us > args.duration * 1_000_000:
@@ -263,7 +350,7 @@ async def run(args):
     async with client.connect() as session:
         await session.client_session_init()
         pub = MediaPublisher(session, args.namespace, catalog)
-        epoch_us = int(time.time() * 1_000_000)
+        stats = {}
         feeders = []
         if not args.no_audio:
             audio_track = pub.add_track(LocTrackPublisher(
@@ -272,41 +359,57 @@ async def run(args):
                 mapping=(StreamMapping.DATAGRAM if args.datagram
                          else StreamMapping.PER_GROUP),
                 loc01_compat=args.loc01_compat))
+            stats['audio'] = _TrackStats()
             if mp4_audio is not None:
                 a_ck = chunkers.get('audio')
                 feeders.append(_feed_mp4_track(
-                    audio_track, mp4_audio, args, epoch_us, all_key=True,
+                    audio_track, mp4_audio, args, stats['audio'],
+                    all_key=True,
                     gap_us=1_000_000 * 1024 // mp4_audio.samplerate,
                     wrap=(lambda s, ck=a_ck:
                           ck.chunk(s.payload, s.duration)) if a_ck
                     else None))
             else:
-                feeders.append(_feed_tone(audio_track, args, epoch_us))
+                feeders.append(_feed_tone(audio_track, args,
+                                          stats['audio']))
         if live is not None:
             fh, asm, first, _ = live
+            stats['video'] = _TrackStats()
             feeders.append(_feed_h264_live(
                 pub.add_track(LocTrackPublisher(
                     session, args.namespace, 'video', config=video.config,
                     loc01_compat=args.loc01_compat)),
-                fh, asm, first, args))
+                fh, asm, first, args, stats['video']))
         elif video is not None:
             v_ck = chunkers.get('video')
+            stats['video'] = _TrackStats()
             feeders.append(_feed_mp4_track(
                 pub.add_track(LocTrackPublisher(
                     session, args.namespace, 'video',
                     config=None if v_ck else video.config,
                     loc01_compat=args.loc01_compat)),
-                video, args, epoch_us,
+                video, args, stats['video'],
                 gap_us=int(1e6 / (video.fps or 30)),
                 wrap=(lambda s, ck=v_ck:
                       ck.chunk(s.payload, s.duration, s.key_frame))
                 if v_ck else None))
-        await pub.start()
+        await pub.start(announce_namespace=(args.pub_ns or args.pub_both),
+                        publish_track=(not args.pub_ns or args.pub_both),
+                        forward=args.forward)
         print("  publishing...")
+        reporter = (asyncio.ensure_future(_report_stats(stats, args.stats))
+                    if args.stats > 0 and stats else None)
+        refresher = (asyncio.ensure_future(
+            _refresh_catalog(pub, args.catalog_interval))
+            if args.catalog_interval > 0 else None)
         feed = asyncio.ensure_future(asyncio.gather(*feeders))
         closed = asyncio.ensure_future(session.async_closed())
         done, _ = await asyncio.wait({feed, closed},
                                      return_when=asyncio.FIRST_COMPLETED)
+        if reporter is not None:
+            reporter.cancel()
+        if refresher is not None:
+            refresher.cancel()
         if closed in done and not feed.done():
             code, reason = getattr(session, '_close_err', None) or ('?', '')
             print(f"  error: session closed: code={code} reason='{reason}'")

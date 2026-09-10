@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from typing import List, Optional, Union
 
@@ -238,6 +239,11 @@ class MOQTClient(MOQTPeer):
             try:
                 if not session.session_closed:
                     session.close(0, b"")
+                    # close() defers the CONNECTION_CLOSE to the next loop
+                    # tick and the network thread transmits it; stop()
+                    # frees that thread, so give the close time to leave.
+                    await asyncio.sleep(0)
+                    await asyncio.wait_for(session.wait_closed(), 0.3)
             except Exception:
                 pass
             try:

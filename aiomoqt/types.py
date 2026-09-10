@@ -247,6 +247,18 @@ CONTROL_MESSAGE_TYPES: Dict[int, frozenset] = {
     }),
 }
 
+# Code points a draft renumbers on the wire while the message class keeps
+# its canonical type: d18 SUBSCRIBE_NAMESPACE 0x11 -> 0x50, PUBLISH_OK
+# 0x1E -> REQUEST_OK 0x07.
+WIRE_TYPE_BY_DRAFT: Dict[int, Dict[int, int]] = {
+    18: {0x11: 0x50, 0x1E: 0x07},
+}
+
+
+def wire_control_type(draft: int, type_: int) -> int:
+    """Wire code point of a control message type at `draft`."""
+    return WIRE_TYPE_BY_DRAFT.get(draft, {}).get(int(type_), int(type_))
+
 
 class ParamType(IntEnum):
     """Parameter types for MOQT messages."""

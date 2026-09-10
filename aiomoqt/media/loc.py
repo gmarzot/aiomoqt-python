@@ -101,6 +101,7 @@ class LocTrackPublisher(PublishedTrack):
         self.mapping = mapping
         self.timescale = timescale
         self.media_kind = media_kind
+        self.frames_dropped = 0  # discarded while Forward State was 0
         self._config_id = (LOC_PROP_AUDIO_CONFIG if media_kind == "audio"
                            else LOC_PROP_VIDEO_CONFIG)
         # Unknown properties are ignored by conformant receivers, so
@@ -167,11 +168,23 @@ class LocTrackPublisher(PublishedTrack):
             stream_id = None
             header = None
 
+        resume_on_key = True  # first group opens on a key frame
         try:
             while True:
                 frame = await self._frames.get()
                 if frame is None:
                     break
+                if not self.forward:
+                    # Forward State 0: discard live frames, end the open
+                    # group; resume only at a key frame in a new group.
+                    _close_group_stream()
+                    resume_on_key = True
+                    self.frames_dropped += 1
+                    continue
+                if resume_on_key and not frame.key_frame:
+                    self.frames_dropped += 1
+                    continue
+                resume_on_key = False
                 if frame.key_frame or group_id < 0:
                     _close_group_stream()
                     group_id += 1

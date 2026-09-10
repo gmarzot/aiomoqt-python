@@ -141,6 +141,8 @@ class PublishedTrack(Track):
         self.forwarding = forwarding
         self.priority = priority
         self.auth_token = auth_token
+        # Subscription Forward State (§5.1): objects are sent only while 1.
+        self.forward = True
         self._subscriber_event = asyncio.Event()
         self._generating = False
         # (group_id, object_id) max over all objects sent; None until
@@ -193,19 +195,11 @@ class PublishedTrack(Track):
             Rare; some relays want both. Breaks on CF d14 moq-rs.
 
         Args:
-          forward: initial Forward State in PUBLISH (d16 §8.2). Default
-            0 = "I'll wait" (spec-conservative; generation starts when
-            relay's PUBLISH_OK or a SUBSCRIBE/REQUEST_UPDATE signals
-            forward=1). Pass forward=1 to declare optimistic intent —
-            generation starts immediately after sending PUBLISH, before
-            waiting for PUBLISH_OK.
-            **EXPERIMENTAL — NOT SUPPORTED BY THE SPEC.** Per Alan
-            Frindell, MoQT does not support sending objects before the
-            PUBLISH_OK handshake completes; relays will reject the
-            unsolicited uni streams (every first-object parse fails).
-            Kept in the API for future use should the spec evolve, and
-            for low-level wire experimentation. Do not rely on this in
-            production.
+          forward: initial Forward State in PUBLISH (§9.13). 0 (default):
+            generation waits for PUBLISH_OK, SUBSCRIBE or an update
+            carrying forward=1. 1: objects start immediately after
+            PUBLISH, before PUBLISH_OK; the peer's PUBLISH_OK or a later
+            update may set forward=0, which pauses emission.
         """
         if not (announce_namespace or publish_track):
             raise ValueError(
@@ -252,6 +246,7 @@ class PublishedTrack(Track):
             )
             self.track_alias = pub_msg.track_alias
             self.request_id = pub_msg.request_id
+            self.forward = bool(forward)
             self.state = TrackState.PUBLISHED
             logger.info(f"Track: published {self.fqtn} "
                          f"alias={self.track_alias} forward={forward}")
@@ -312,13 +307,22 @@ class PublishedTrack(Track):
         self._generating = True
         await self.generate(session, self.track_alias)
 
+    def _set_forward(self, forward: Optional[int]) -> None:
+        """Apply a peer-signalled Forward State; None leaves it unchanged."""
+        if forward is None:
+            return
+        forward = bool(forward)
+        if forward != self.forward:
+            logger.info(f"Track: forward state -> {int(forward)}")
+        self.forward = forward
+
     async def _on_publish_ok(self, session, msg: PublishOk):
         """Relay accepted our PUBLISH. forward=1 starts generation if
         not already running (no-op if optimistic publish already kicked
-        off the generator). forward=0 is logged but does not stop a
-        running generator — relay can RESET streams to enforce."""
+        off the generator); forward=0 pauses object emission."""
         logger.info(f"Track: PUBLISH_OK: forward={msg.forward}")
-        if msg.forward:
+        self._set_forward(msg.forward)
+        if self.forward:
             await self._start_generating(session, "PUBLISH_OK")
 
     async def _await_publish_reply(self, request_id: int):
@@ -334,7 +338,8 @@ class PublishedTrack(Track):
             forward = (reply.parameters or {}).get(ParamType.FORWARD) \
                 if hasattr(reply, 'parameters') else None
         logger.info(f"Track: PUBLISH_OK (REQUEST_OK): forward={forward}")
-        if forward:
+        self._set_forward(forward)
+        if self.forward:
             await self._start_generating(self.session, "PUBLISH_OK")
 
     async def _on_request_update(self, session, msg: RequestUpdate):
@@ -346,14 +351,15 @@ class PublishedTrack(Track):
                             RequestOk(request_id=msg.request_id))
         forward = (msg.parameters.get(ParamType.FORWARD)
                    if msg.parameters else None)
-        if not forward:
-            return
-        await self._start_generating(session, "REQUEST_UPDATE")
+        self._set_forward(forward)
+        if forward:
+            await self._start_generating(session, "REQUEST_UPDATE")
 
     async def _on_subscribe_update(self, session, msg):
         """SUBSCRIBE_UPDATE — subscriber changed forward state."""
         logger.info(f"Track: SUBSCRIBE_UPDATE: forward={msg.forward}")
-        if msg.forward:
+        self._set_forward(msg.forward)
+        if self.forward:
             await self._start_generating(session, "SUBSCRIBE_UPDATE")
 
     async def _on_subscribe(self, session, msg):
@@ -372,7 +378,9 @@ class PublishedTrack(Track):
         # stream — stop generating when it does.
         session.register_request_cancel_handler(
             msg.request_id, self._on_request_cancelled)
-        await self._start_generating(session, "SUBSCRIBE")
+        self._set_forward(getattr(msg, 'forward', None))
+        if self.forward:
+            await self._start_generating(session, "SUBSCRIBE")
 
     def _on_request_cancelled(self, request_id: int) -> None:
         """Peer terminated the subscription's request stream (§3.3.2):

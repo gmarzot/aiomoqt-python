@@ -681,10 +681,20 @@ class _MOQTSessionMixin:
             msg = message_class.deserialize(buf, prof=self._profile, buf_end=end_pos)
             # d18 replies omit the Request ID (demuxed by request stream);
             # inject the stream-bound id so handlers key on it unchanged.
+            # A message that carries its own id (REQUEST_UPDATE) keeps it.
             if (request_id is not None and
                     not self._profile.reply_has_request_id and
                     hasattr(msg, 'request_id')):
-                msg.request_id = request_id
+                if getattr(msg, 'request_id', None) is None:
+                    msg.request_id = request_id
+                elif isinstance(msg, RequestUpdate):
+                    # d18 §10.9: the updated request is the stream's;
+                    # answer on the same stream under the update's id.
+                    if msg.existing_request_id is None:
+                        msg.existing_request_id = request_id
+                    sid = self._bidi_streams.get(request_id)
+                    if sid is not None:
+                        self._bidi_streams[int(msg.request_id)] = sid
             # Latch DEFAULT_PUBLISHER_PRIORITY synchronously: data
             # streams drain in the same event batch, and the deferred
             # handler task loses that race (group-0 objects would
@@ -696,10 +706,11 @@ class _MOQTSessionMixin:
             # §10.1: a peer's request ids keep one parity (client even,
             # server odd) and strictly increase; wrong parity or a
             # reused id MUST close the session with INVALID_REQUEST_ID.
-            # request_id is None exactly when this message is not a
-            # bound-stream reply — i.e. a fresh request opener.
-            if (request_id is None
-                    and isinstance(msg, self._REQUEST_OPENERS)
+            # Applies to request openers (never on a bound stream) and to
+            # REQUEST_UPDATE, which consumes an id on every draft.
+            if (((request_id is None
+                    and isinstance(msg, self._REQUEST_OPENERS))
+                    or isinstance(msg, RequestUpdate))
                     and getattr(msg, 'request_id', None) is not None):
                 rid = int(msg.request_id)
                 peer_parity = 1 if self._is_client else 0
@@ -2070,7 +2081,8 @@ class _MOQTSessionMixin:
         """
         draft = self.negotiated_draft
         legal = CONTROL_MESSAGE_TYPES.get(draft)
-        if legal is None or msg.type is None or msg.type in legal:
+        if (legal is None or msg.type is None
+                or wire_control_type(draft, msg.type) in legal):
             return
         name = getattr(msg.type, 'name', None) or type(msg).__name__
         raise MOQTException(
@@ -2139,6 +2151,7 @@ class _MOQTSessionMixin:
         stream (d16+ SUBSCRIBE_NAMESPACE response routing). Like
         send_control_message, serialization happens here at the session
         profile so callers never thread prof=."""
+        self._assert_type_defined_by_draft(msg)
         self.stream_write(stream_id, msg.serialize(prof=self._profile).data)
 
     def subgroup_header(self, track_alias: int, group_id: int,
@@ -2158,17 +2171,28 @@ class _MOQTSessionMixin:
         request's own bidi stream (demuxed by stream, no in-band Request
         ID); pre-d18 they go on the single control stream."""
         if self._profile.control_uni_pair:
-            sid = self._bidi_streams.get(request_id)
-            if sid is None:
-                # Both directions bind request streams (incoming at
-                # _on_control_data, outgoing at _send_request); a
-                # missing binding is a bug, and falling back to the
-                # control stream would emit an uncorrelatable reply.
-                raise MOQTException(
-                    SessionCloseCode.INTERNAL_ERROR,
-                    f"no request stream bound for request_id="
-                    f"{request_id}: cannot send {type(msg).__name__}")
+            self._send_on_request_stream(request_id, msg)
+        else:
+            self.send_control_message(msg)
+
+    def _send_on_request_stream(self, request_id: int,
+                                msg: MOQTMessage) -> None:
+        """Send on the bidi stream a request owns: every request in d18,
+        SUBSCRIBE_NAMESPACE from d16. Pre-d18 an unbound request falls
+        back to the control stream; d18 has no such path."""
+        sid = (self._bidi_streams.get(request_id)
+               if is_draft16_or_later(self.negotiated_draft) else None)
+        if sid is not None:
             self.send_stream_message(sid, msg)
+        elif self._profile.control_uni_pair:
+            # Both directions bind request streams (incoming at
+            # _on_control_data, outgoing at _send_request); a missing
+            # binding is a bug, and falling back to the control stream
+            # would emit an uncorrelatable reply.
+            raise MOQTException(
+                SessionCloseCode.INTERNAL_ERROR,
+                f"no request stream bound for request_id="
+                f"{request_id}: cannot send {type(msg).__name__}")
         else:
             self.send_control_message(msg)
 
@@ -2944,15 +2968,17 @@ class _MOQTSessionMixin:
         The ack alone reports no namespaces: in d18 the application
         follows it with namespace() per namespace it serves.
         """
-        if is_draft16_or_later(self.negotiated_draft):
-            message = RequestOk(request_id=msg.request_id)
-        else:
+        if not is_draft16_or_later(self.negotiated_draft):
             message = SubscribeNamespaceOk(request_id=msg.request_id)
+            logger.info(f"MOQT send: {message}")
+            self.send_control_message(message)
+            return message
+        message = RequestOk(request_id=msg.request_id)
         logger.info(f"MOQT send: {message}")
-        if stream_id is not None and is_draft16_or_later(self.negotiated_draft):
+        if stream_id is not None:
             self.send_stream_message(stream_id, message)
         else:
-            self.send_control_message(message)
+            self._send_on_request_stream(msg.request_id, message)
         return message
 
     def subscribe_tracks_ok(
@@ -2965,20 +2991,19 @@ class _MOQTSessionMixin:
         The ack reports no tracks: the application follows it with a
         PUBLISH per track in the requested namespace.
         """
-        if stream_id is None:
-            stream_id = self._bidi_streams.get(msg.request_id)
         message = RequestOk(request_id=msg.request_id)
         logger.info(f"MOQT send: {message}")
         if stream_id is not None:
             self.send_stream_message(stream_id, message)
         else:
-            self.send_control_message(message)
+            self._send_on_request_stream(msg.request_id, message)
         return message
 
     def namespace(
         self,
         namespace_suffix: Union[str, Tuple[bytes, ...]] = (),
         stream_id: int = None,
+        request_id: int = None,
     ) -> Optional[MOQTMessage]:
         """Report one namespace under a prefix a peer subscribed to, as
         a suffix relative to that prefix — an empty suffix means the
@@ -2986,20 +3011,29 @@ class _MOQTSessionMixin:
 
         d18 discovery is two-level: this answers SUBSCRIBE_NAMESPACE
         (which namespaces exist), and the peer then asks each one for
-        its tracks with SUBSCRIBE_TRACKS. Send on the request's bidi
-        stream, after subscribe_namespace_ok().
+        its tracks with SUBSCRIBE_TRACKS. It rides the SUBSCRIBE_NAMESPACE
+        request stream, after subscribe_namespace_ok(): pass that
+        request's id (or its stream id directly).
         """
         if isinstance(namespace_suffix, str):
             suffix = (self._make_namespace_tuple(namespace_suffix)
                       if namespace_suffix else ())
         else:
             suffix = tuple(namespace_suffix)
+        if not is_draft16_or_later(self.negotiated_draft):
+            raise MOQTException(
+                SessionCloseCode.INTERNAL_ERROR,
+                f"NAMESPACE is not defined by draft-{self.negotiated_draft}")
         message = Namespace(namespace_suffix=suffix)
         logger.info(f"MOQT send: {message}")
         if stream_id is not None:
             self.send_stream_message(stream_id, message)
+        elif request_id is not None:
+            self._send_on_request_stream(request_id, message)
         else:
-            self.send_control_message(message)
+            raise ValueError(
+                "namespace() needs the SUBSCRIBE_NAMESPACE request_id "
+                "or stream_id: NAMESPACE is not a control-stream message")
         return message
 
     async def subscribe_tracks(
@@ -3017,6 +3051,11 @@ class _MOQTSessionMixin:
         Pre-d18 the first request did both, which obliged a relay to
         push a PUBLISH for every track under a broad prefix.
         """
+        if not self._profile.two_level_discovery:
+            raise MOQTException(
+                SessionCloseCode.INTERNAL_ERROR,
+                f"SUBSCRIBE_TRACKS is not defined by "
+                f"draft-{self.negotiated_draft}")
         if parameters is None:
             parameters = {}
         ns = self._make_namespace_tuple(namespace)

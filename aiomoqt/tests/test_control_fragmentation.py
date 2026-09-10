@@ -241,6 +241,36 @@ async def test_d18_request_stream_must_open_with_a_request():
     assert s._closed[0][0] == SessionCloseCode.PROTOCOL_VIOLATION
 
 
+async def test_d18_request_update_keeps_its_own_id_and_binds_the_stream():
+    # §10.9: REQUEST_UPDATE carries its own Request ID; the request it
+    # updates is the stream's. Handlers see both, the update's id is
+    # subject to §10.1, and a reply under it resolves the same stream.
+    from aiomoqt.messages.request import RequestUpdate
+    from aiomoqt.types import MOQTMessageType
+    s = _control_session(18)
+    s.is_client = False
+    s._peer_request_max = -1
+    seen = []
+
+    async def _capture(session, msg):
+        seen.append(msg)
+    s._control_msg_overrides[MOQTMessageType.SUBSCRIBE_UPDATE] = _capture
+    s._bidi_stream_requests[9] = 2
+    s._bidi_streams[2] = 9
+    frame = bytes(RequestUpdate(request_id=4, existing_request_id=None,
+                                parameters={}).serialize(prof=s._profile).data)
+    s._on_control_data(9, frame, False, is_request_bidi=True)
+    await asyncio.sleep(0)
+    assert not s._closed
+    assert seen[0].request_id == 4
+    assert seen[0].existing_request_id == 2
+    assert s._peer_request_max == 4
+    sent = []
+    s.send_stream_message = lambda sid, m: sent.append((sid, m))
+    s._send_reply(4, RequestOk(request_id=4, parameters={}))
+    assert sent[0][0] == 9
+
+
 async def test_d18_control_stream_carries_only_setup_and_goaway():
     # d18 Table 5: a SUBSCRIBE arriving on the control uni is a
     # violation — it cannot own a reply stream.

@@ -106,6 +106,46 @@ async def test_audio_one_object_per_group():
 
 
 @pytest.mark.asyncio
+async def test_forward_state_zero_drops_until_key_frame():
+    # §5.1: no objects while Forward State is 0; on 1 the track resumes
+    # at the next key frame in a fresh group.
+    port = _BASE_PORT + 11
+    pubs = []
+    server = MOQTServer(
+        host="localhost", port=port, certificate=CERT, private_key=KEY,
+        path="/", use_quic=True, supported_drafts=18,
+    )
+
+    async def _on_subscribe(session, msg):
+        ok = session.subscribe_ok(request_msg=msg, content_exists=0)
+        await asyncio.sleep(0.05)
+        pub = LocTrackPublisher(session, "loc/ns", "track",
+                                mapping=StreamMapping.PER_GROUP)
+        pubs.append(pub)
+        pub.forward = False
+        await pub.send_frame(b"idr-0", key_frame=True, timestamp=1000)
+        await pub.send_frame(b"p-1", key_frame=False, timestamp=1001)
+        gen = asyncio.create_task(pub.generate(session, ok.track_alias))
+        await asyncio.sleep(0.05)
+        pub.forward = True
+        await pub.send_frame(b"p-2", key_frame=False, timestamp=1002)
+        await pub.send_frame(b"idr-1", key_frame=True, timestamp=1003)
+        await pub.send_frame(b"p-4", key_frame=False, timestamp=1004)
+        await pub.finish()
+        await gen
+
+    server.register_handler(MOQTMessageType.SUBSCRIBE, _on_subscribe)
+    server = await server.serve()
+    try:
+        got, _ = await _subscribe_collect(port, 2)
+    finally:
+        server.close()
+    assert sorted((g, o, f.payload) for g, o, f in got) == [
+        (0, 0, b"idr-1"), (0, 1, b"p-4")]
+    assert pubs[0].frames_dropped == 3
+
+
+@pytest.mark.asyncio
 async def test_config_seeded_from_catalog():
     # No VIDEO_CONFIG on the wire — set_config (catalog initRef path)
     # provides it and the wire never overwrites it with absence.

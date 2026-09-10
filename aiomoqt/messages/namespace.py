@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Dict, Tuple, Any, Optional
 
 from . import MOQTMessageType, D18MessageType, MOQTMessage, BUF_SIZE
+from ..types import wire_control_type
 from ..context import is_draft16_or_later, DraftProfile
 from ..utils.buffer import Buffer, BufferReadError
 from ..utils.logger import get_logger
@@ -235,8 +236,7 @@ class SubscribeNamespace(MOQTMessage):
 
         # d18 renumbers this 0x11 -> 0x50 and writes the type as vi64.
         buf.vi64 = prof.vi64
-        buf.push_vint(
-            D18MessageType.SUBSCRIBE_NAMESPACE if buf.vi64 else self.type)
+        buf.push_vint(wire_control_type(prof.draft, self.type))
         buf.push_uint16(payload.tell())
         buf.push_bytes(payload.data_slice(0, payload.tell()))
         return buf

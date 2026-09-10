@@ -321,8 +321,16 @@ async def _on_fetch(session, msg):
         await session.serve_fetch(msg.request_id, ())
         return
     fg, fo, lg, lo = win
+    # §10.13: FETCH_OK End Location is the last Object PLUS 1 (exclusive),
+    # {Largest.Group, Largest.Object + 1}. The marker slot is not a real
+    # Object. end_of_track when the window reaches the track's last Object.
+    markers_on = p.markers and p.fp != 3
+    real_last = last_object_in_group(p) - (p.o_inc if markers_on else 0)
+    end_obj = (lo + 1) if (lo and lo < real_last) else (real_last + 1)
+    reaches_end = lg >= p.last_group and (not lo or lo >= real_last)
     session.fetch_ok(request_id=msg.request_id, largest_group_id=lg,
-                     largest_object_id=last_object_in_group(p),
+                     largest_object_id=end_obj,
+                     end_of_track=1 if reaches_end else 0,
                      group_order=order)
     # FETCH_OK is terminal on the request stream (§3.3.2); the objects
     # ride a separate uni stream. FIN the request stream so the peer

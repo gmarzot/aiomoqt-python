@@ -235,9 +235,7 @@ class PublishOk(MOQTMessage):
         # d18 answers a PUBLISH with the universal REQUEST_OK (0x07);
         # "PUBLISH_OK" is then the shorthand for a REQUEST_OK sent in
         # response to a PUBLISH (§10.5).
-        wire_type = (D16MessageType.REQUEST_OK
-                     if prof.draft >= 18 else self.type)
-        buf.push_uint_var(wire_type)
+        buf.push_uint_var(wire_control_type(prof.draft, self.type))
         buf.push_uint16(payload.tell())
         buf.push_bytes(payload.data_slice(0, payload.tell()))
         return buf

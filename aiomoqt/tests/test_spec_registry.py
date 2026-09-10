@@ -83,9 +83,11 @@ D18_REMOVED = {
     0x09: "PUBLISH_NAMESPACE_DONE", 0x0A: "UNSUBSCRIBE",
     0x0C: "PUBLISH_NAMESPACE_CANCEL", 0x17: "FETCH_CANCEL",
     0x15: "MAX_REQUEST_ID", 0x1A: "REQUESTS_BLOCKED",
-    0x11: "SUBSCRIBE_NAMESPACE",  # renumbered to 0x50
     0x20: "CLIENT_SETUP", 0x21: "SERVER_SETUP",  # RESERVED in d18
 }
+
+# Canonical types d18 keeps under a new code point (the guard maps them).
+D18_RENUMBERED = {0x11: 0x50, 0x1E: 0x07}
 
 
 class _Sess:
@@ -124,6 +126,14 @@ def test_d18_refuses_types_it_does_not_define(type_, name):
     with pytest.raises(Exception) as exc:
         _guard(_Sess(18), _Msg(type_))
     assert "draft-18" in str(exc.value)
+
+
+@pytest.mark.parametrize("canonical,wire", sorted(D18_RENUMBERED.items()))
+def test_d18_renumbered_types_are_sendable_under_their_wire_code(canonical, wire):
+    from aiomoqt.types import wire_control_type
+    assert wire_control_type(18, canonical) == wire
+    assert wire_control_type(16, canonical) == canonical
+    _guard(_Sess(18), _Msg(canonical))  # must not raise
 
 
 def test_d18_removed_types_remain_legal_on_older_drafts():

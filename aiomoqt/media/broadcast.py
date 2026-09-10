@@ -16,7 +16,7 @@ import asyncio
 from typing import Callable, Dict, Optional
 
 from ..messages import FetchHeader, FetchObject, SubgroupHeader
-from ..track import PublishedTrack, SubscribedTrack
+from ..track import PublishedTrack, SubscribedTrack, TrackState
 from ..types import MOQTMessageType, ObjectStatus
 from ..utils.logger import get_logger
 from .catalog import (
@@ -120,15 +120,30 @@ class MediaPublisher:
         self._by_name[track.trackname] = track
         return track
 
-    async def start(self) -> None:
-        """PUBLISH every track (catalog first, §11.2), then install the
-        session-level demux over PublishedTrack's per-track handlers.
+    async def start(self, announce_namespace: bool = False,
+                    publish_track: bool = True, forward: int = 0) -> None:
+        """Announce the broadcast, then install the session-level demux
+        over PublishedTrack's per-track handlers.
 
-        forward=1: a live broadcast generates immediately — waiting for
-        a subscriber to flip the forward state leaves the session idle
-        and relays drop it."""
+        announce_namespace: one PUBLISH_NAMESPACE for the broadcast; the
+        relay forwards subscriber SUBSCRIBEs per track.
+        publish_track: PUBLISH every track (catalog first, §11.2).
+        forward: initial Forward State in PUBLISH (§9.13). 0 sends no
+        objects until PUBLISH_OK, SUBSCRIBE or an update carries
+        forward=1; 1 starts immediately, and a peer's forward=0 pauses.
+        """
+        if not (announce_namespace or publish_track):
+            raise ValueError("start(): need announce_namespace or "
+                             "publish_track")
+        if announce_namespace:
+            await self.session.publish_namespace(
+                namespace=self.namespace, wait_response=True)
+            logger.info(f"MediaPublisher: announced '{self.namespace}'")
         for track in self._by_name.values():
-            await track.publish(publish_track=True, forward=1)
+            if publish_track:
+                await track.publish(publish_track=True, forward=forward)
+            else:
+                track.state = TrackState.ANNOUNCED
         self.session.register_handler(
             MOQTMessageType.SUBSCRIBE, self._demux_subscribe)
         self.session.register_handler(
