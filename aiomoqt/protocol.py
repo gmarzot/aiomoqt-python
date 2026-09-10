@@ -576,13 +576,16 @@ class _MOQTSessionMixin:
 
     def register_stream_end_handler(self, track_alias: int,
                                     callback: Callable) -> None:
-        """Called as callback(group_id, subgroup_id) when one of this
-        track's subgroup streams ends.
+        """Called as callback(group_id, subgroup_id, clean, reset_code)
+        when one of this track's subgroup streams ends: clean=True for a
+        FIN, False for a reset/STOP_SENDING/rejection (reset_code is the
+        peer's code, 0 if none).
 
         A publisher may signal end-of-group by closing the subgroup
-        stream rather than by sending an END_OF_GROUP object, so a relay
-        that only watches objects never learns the group ended and
-        leaves its downstream stream open to be reset at teardown."""
+        stream rather than by sending an END_OF_GROUP object (§11.4.2:
+        inferable from a FIN, never from a reset), so a relay that only
+        watches objects never learns the group ended and leaves its
+        downstream stream open to be reset at teardown."""
         self._stream_end_handlers[track_alias] = callback
 
     def unregister_stream_end_handler(self, track_alias: int) -> None:
@@ -826,7 +829,8 @@ class _MOQTSessionMixin:
         return out
 
     def _cleanup_stream(self, stream_id: int,
-                        error_code: int = QuicErrorCode.NO_ERROR) -> None:
+                        error_code: int = QuicErrorCode.NO_ERROR,
+                        reset_code: int = 0) -> None:
         """Per-uni-stream end-of-life. Replaces the per-task done
         callback now that there is no per-stream task — every place
         that used to cancel a task or push a FIN sentinel calls this
@@ -843,7 +847,9 @@ class _MOQTSessionMixin:
             cb = self._stream_end_handlers.get(alias)
             if cb:
                 try:
-                    cb(group_id, subgroup_id)
+                    cb(group_id, subgroup_id,
+                       clean=(error_code == QuicErrorCode.NO_ERROR),
+                       reset_code=reset_code)
                 except Exception:
                     logger.debug("stream-end handler raised", exc_info=True)
         if key and len(key) == 2 and key[0] == 'fetch':
@@ -1756,7 +1762,8 @@ class _MOQTSessionMixin:
             logger.debug(f"MOQT event: StreamReset: stream {event.stream_id}")
             self._on_request_stream_terminated(event.stream_id)
             self._cleanup_stream(
-                event.stream_id, QuicErrorCode.APPLICATION_ERROR)
+                event.stream_id, QuicErrorCode.APPLICATION_ERROR,
+                reset_code=int(event.error_code or 0))
             return
 
         if logger.isEnabledFor(logging.DEBUG):

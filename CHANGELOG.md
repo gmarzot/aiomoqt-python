@@ -43,6 +43,9 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
 ### Relay (`tools.moq_interop_relay`)
 - Subgroup-END queue entry arity fixed (a forward loop died on the first
   upstream subgroup close).
+- Stream-end handlers receive `clean` and `reset_code`; an upstream reset
+  is relayed as a downstream reset with the same code, never as a FIN
+  (§11.4.2: end-of-group is inferable from a FIN only).
 - WT teardown grace: CONNECTION_CLOSE reaches the wire.
 
 ### Tests / CI

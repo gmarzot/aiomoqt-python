@@ -26,6 +26,28 @@ class _Downstream:
     async def stream_write_drain(self, sid, data):
         self.writes.append((sid, len(data), False))
 
+    def stream_reset(self, sid, code):
+        self.writes.append((sid, "reset", code))
+
+
+@pytest.mark.asyncio
+async def test_upstream_reset_becomes_a_downstream_reset_not_a_fin():
+    # §11.4.2: end-of-group may be inferred from a FIN, never from a reset,
+    # so an upstream reset must not be relayed as a clean stream end.
+    track = _RelayedTrack(("ns", "t"))
+    down = _Downstream()
+    track.downstream.append((down, 7, 1))
+    loop_task = asyncio.create_task(track._forward_loop())
+
+    track.on_object(_Obj(group_id=0, object_id=0), 0, 0, 0, 0)
+    track.on_stream_end(0, 0, clean=False, reset_code=2)   # DELIVERY_TIMEOUT
+    for _ in range(20):
+        await asyncio.sleep(0)
+    loop_task.cancel()
+
+    assert (3, "reset", 2) in down.writes
+    assert not any(fin is True for _sid, _n, fin in down.writes)
+
 
 @pytest.mark.asyncio
 async def test_forward_loop_survives_subgroup_end():

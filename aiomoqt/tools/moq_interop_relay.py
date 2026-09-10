@@ -54,7 +54,7 @@ from aiomoqt.server import MOQTServer
 from aiomoqt.types import (
     D18MessageType, FilterType, GroupOrder, MOQTMessageType,
     MOQTRequestError, ObjectStatus, ParamType, RequestErrorCode,
-    SubscribeErrorCode, parse_draft_spec,
+    StreamResetCode, SubscribeErrorCode, parse_draft_spec,
 )
 from aiomoqt.messages import SubgroupHeader
 from aiomoqt.messages.publish import PublishOk
@@ -235,12 +235,13 @@ class _RelayedTrack:
                 logger.debug("relay: finish failed for a subscriber",
                              exc_info=True)
 
-    def on_stream_end(self, group_id, subgroup_id):
-        """Upstream closed a subgroup stream: end ours the same way so
-        the subscriber sees a clean group end rather than a reset."""
+    def on_stream_end(self, group_id, subgroup_id, clean=True, reset_code=0):
+        """Upstream ended a subgroup stream: mirror it. A FIN becomes our
+        FIN (the subscriber may infer end-of-group, §11.4.2); a reset
+        becomes our reset with the same code, never a FIN."""
         self.queue.put_nowait(
-            (group_id, subgroup_id or 0, None, None, None, None, "END",
-             None))
+            (group_id, subgroup_id or 0, None, None, None, None,
+             "END" if clean else "RESET", reset_code))
 
     def on_object(self, msg, size, ts, group_id, subgroup_id):
         """Upstream delivery callback (sync) — hand off to the drain."""
@@ -289,7 +290,16 @@ class _RelayedTrack:
         upstream so the downstream sees the publisher's structure."""
         skey = (id(session), gid, sgid)
         entry = self._streams.get(skey)
-        if entry is None and status == "END":
+        if entry is None and status in ("END", "RESET"):
+            return
+        if status == "RESET":
+            stream_id, _header = entry
+            try:
+                code = StreamResetCode(shape or 0)
+            except ValueError:
+                code = StreamResetCode.INTERNAL_ERROR
+            session.stream_reset(stream_id, int(code))
+            self._streams.pop(skey, None)
             return
         if entry is None:
             stream_id = await session.open_uni_stream()
