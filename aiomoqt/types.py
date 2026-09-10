@@ -359,13 +359,18 @@ class RequestErrorCode(IntEnum):
     NOT_SUPPORTED = 0x03
     MALFORMED_AUTH_TOKEN = 0x04   # was 0x10 in d14
     EXPIRED_AUTH_TOKEN = 0x05     # was 0x12 in d14
+    GOING_AWAY = 0x06             # d18
+    EXCESSIVE_LOAD = 0x09         # d18
     DOES_NOT_EXIST = 0x10         # was 0x04 (TRACK_DOES_NOT_EXIST) in d14
     INVALID_RANGE = 0x11          # was 0x05 in d14
     MALFORMED_TRACK = 0x12
     DUPLICATE_SUBSCRIPTION = 0x19
     UNINTERESTED = 0x20           # was 0x04 in PublishErrorCode d14
     PREFIX_OVERLAP = 0x30
+    NAMESPACE_TOO_LARGE = 0x31    # d18
     INVALID_JOINING_REQUEST_ID = 0x32
+    UNSUPPORTED_EXTENSION = 0x33  # d18
+    REDIRECT = 0x34               # d18; REQUEST_ERROR carries a Redirect
 
 
 class SubscribeDoneCode(IntEnum):

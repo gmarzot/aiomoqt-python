@@ -25,6 +25,11 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
 - d16 status datagrams use the merged OBJECT_DATAGRAM layout (STATUS
   0x20 / DEFAULT_PRIORITY 0x08, RFC 9000 varints); they were emitted in
   the d14 shape. `DraftProfile.merged_datagram_layout` gates TX and RX.
+- Status datagrams (END_OF_GROUP / END_OF_TRACK) are delivered to the
+  object consumer on every draft; they were parsed and dropped.
+- RequestErrorCode gains the d18 codes (GOING_AWAY, EXCESSIVE_LOAD,
+  NAMESPACE_TOO_LARGE, UNSUPPORTED_EXTENSION, REDIRECT) and REQUEST_ERROR
+  carries the §10.6.1 Redirect structure with REDIRECT at d18.
 
 ### Features
 - Verb surface complete: `track_status()`, `request_update()` (d18 on
@@ -37,6 +42,9 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
   at d16 and d18; End Location exclusive per §10.13.
 - pub_media: `--pub-ns`/`--pub-both`, `--forward {0,1}`,
   `--catalog-interval`; short pipe reads on the live H.264 path.
+- pub_media `--ts`: live MPEG-TS ingest (`aiomoqt.media.mpegts`) — H.264
+  and AAC on one pipe, stamped from the PES PTS, catalog republished on
+  a codec-config change; every run prints its player URL (`--player-base`).
 - load_sim: `viewers` scenario (headless audience against a live
   broadcast).
 

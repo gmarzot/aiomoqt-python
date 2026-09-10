@@ -1393,10 +1393,9 @@ class _MOQTSessionMixin:
             logstr = f"{id} size: {consumed} bytes {delay}"
 
             logger.debug(f"MOQT event: ObjectDatagramStatus: {logstr}")
-            # Deliberate: status datagrams are wire-level signals (end
-            # of group / track markers), not data objects — they are
-            # parsed and logged but NOT delivered to on_object_received,
-            # so subscriber object/byte counters stay data-only.
+            cb = self._object_cb(msg.track_alias)
+            if cb:
+                cb(msg, consumed, now, group_id, None)
             return msg
         else:
             error = f"datagram type unknown: 0x{dgram_type:x}"
@@ -1440,10 +1439,12 @@ class _MOQTSessionMixin:
         logger.debug(
             f"MOQT event: d18 ObjectDatagram: {msg.group_id}.{msg.object_id} "
             f"size: {consumed} bytes status: {msg.status}")
-        if msg.status == ObjectStatus.NORMAL:
-            cb = self._object_cb(msg.track_alias)
-            if cb:
-                cb(msg, consumed, now, msg.group_id, None)
+        # Status datagrams (END_OF_GROUP / END_OF_TRACK) reach the consumer
+        # like their subgroup-stream counterparts; consumers filter on
+        # msg.status.
+        cb = self._object_cb(msg.track_alias)
+        if cb:
+            cb(msg, consumed, now, msg.group_id, None)
         return msg
 
     def _on_control_data(self, stream_id: int, data, end_stream: bool,
