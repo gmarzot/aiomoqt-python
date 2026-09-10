@@ -258,6 +258,12 @@ class _MOQTSessionMixin:
         # split even the stream-type vint across packets, so the first
         # bytes are held here until SETUP-or-data can be decided.
         self._uni_peek_stash: Dict[int, bytes] = {}
+        # Raw-QUIC sessions offering several drafts learn theirs from
+        # ProtocolNegotiated, which the data ring can outrun: a d18 peer's
+        # control uni may arrive first. Its bytes wait here and replay
+        # through _route_stream_data once the draft is settled.
+        self._draft_settled = _pinned is not None
+        self._pre_draft_stream_data: Dict[int, Tuple[bytearray, bool]] = {}
         # Tombstone map: stream_ids whose state was popped in response
         # to RESET / STOP_SENDING / UNSUBSCRIBE / SubscribeDone teardown.
         # _on_stream_data drops chunks for these — the publisher's
@@ -1518,6 +1524,79 @@ class _MOQTSessionMixin:
         if end_stream:
             self._control_chains.pop(stream_id, None)
 
+    def _ingest_stream_data(self, stream_id: int, data, end_stream: bool) -> None:
+        """Route stream bytes, or hold them while a raw-QUIC session's
+        draft is still unsettled (WT sessions settle at session setup or
+        negotiate in-band, so they never wait)."""
+        if self._draft_settled or self._is_wt:
+            self._route_stream_data(stream_id, data, end_stream)
+            return
+        held = self._pre_draft_stream_data.get(stream_id)
+        buf = held[0] if held is not None else bytearray()
+        buf.extend(data)
+        self._pre_draft_stream_data[stream_id] = (
+            buf, (held[1] if held is not None else False) or end_stream)
+
+    def _settle_draft(self, draft: int) -> None:
+        """Lock the negotiated draft and replay stream bytes that arrived
+        before it was known."""
+        self.negotiated_draft = draft
+        self._draft_settled = True
+        pending = self._pre_draft_stream_data
+        self._pre_draft_stream_data = {}
+        for stream_id, (data, end_stream) in pending.items():
+            self._route_stream_data(stream_id, bytes(data), end_stream)
+
+    def _route_stream_data(self, stream_id: int, data, end_stream: bool) -> None:
+        """Route one stream's bytes by stream direction and draft."""
+        # Uni MoQT streams. In d18 the peer's control stream is a uni
+        # stream beginning with SETUP (vi64 0x2F00): bind it on first
+        # contact and route it to the control parser. Every other uni
+        # stream is data (object subgroups / fetch) -> StreamChain hot
+        # path (memoryview-native; no Buffer construction).
+        if stream_is_unidirectional(stream_id):
+            if self._profile.control_uni_pair:
+                if stream_id in self._uni_peek_stash or (
+                        self._d18_control_read_sid is None and
+                        stream_id not in self._data_streams and
+                        stream_id not in self._stream_torn_down):
+                    self._classify_d18_uni(stream_id, data, end_stream)
+                    return
+                if stream_id == self._d18_control_read_sid:
+                    self._on_control_data(stream_id, data, end_stream)
+                    return
+            self._on_stream_data(stream_id, data, end_stream)
+            return
+
+        # Bidi streams: d18 request streams, or the d14/d16 control
+        # stream + d16 request streams. All parse control messages via
+        # the reassembling chain ingest (_on_control_data).
+        logger.debug(
+            f"MOQT event: StreamDataReceived: stream: {stream_id} "
+            f"len: {len(data)}")
+
+        # d18: control is a uni pair, so every bidi stream is a request
+        # stream (SUBSCRIBE/FETCH/...). Pre-d18 the first bidi stream is
+        # latched as the single control stream.
+        if self._profile.control_uni_pair:
+            self._on_control_data(stream_id, data, end_stream,
+                                  is_request_bidi=True)
+            return
+
+        if self._control_stream_id is None:
+            self._control_stream_id = stream_id
+            logger.debug(f"QUIC event: detecting control stream: {stream_id}")
+        elif stream_id != self._control_stream_id:
+            if is_draft16_or_later(self.negotiated_draft):
+                self._on_control_data(stream_id, data, end_stream,
+                                      is_request_bidi=True)
+                return
+            logger.warning(f"MOQT event: unrecognized bidirectional stream({stream_id})")
+            return
+
+        if stream_id == self._control_read_stream_id:
+            self._on_control_data(stream_id, data, end_stream)
+
     @staticmethod
     def _d18_peek_is_setup(data) -> Optional[bool]:
         """Classify a uni stream's leading bytes against the d18 control
@@ -1588,8 +1667,8 @@ class _MOQTSessionMixin:
                     draft = get_major_version(moqt_version_from_alpn(alpn))
                     if draft not in PROFILES:
                         raise ValueError(f"unsupported draft-{draft}")
-                    self.negotiated_draft = draft
-                    logger.info(f"MOQT: version set from ALPN: {alpn} -> draft-{self.negotiated_draft}")
+                    logger.info(f"MOQT: version set from ALPN: {alpn} -> draft-{draft}")
+                    self._settle_draft(draft)
                 except ValueError:
                     logger.error(f"QUIC error: unsupported ALPN version: {alpn}")
                     self._close_session(
@@ -1634,57 +1713,7 @@ class _MOQTSessionMixin:
                 )
                 return
 
-            # Uni MoQT streams. In d18 the peer's control stream is a uni
-            # stream beginning with SETUP (vi64 0x2F00): bind it on first
-            # contact and route it to the control parser. Every other uni
-            # stream is data (object subgroups / fetch) -> StreamChain hot
-            # path (memoryview-native; no Buffer construction).
-            if stream_is_unidirectional(stream_id):
-                if self._profile.control_uni_pair:
-                    if stream_id in self._uni_peek_stash or (
-                            self._d18_control_read_sid is None and
-                            stream_id not in self._data_streams and
-                            stream_id not in self._stream_torn_down):
-                        self._classify_d18_uni(
-                            stream_id, data, event.end_stream)
-                        return
-                    if stream_id == self._d18_control_read_sid:
-                        self._on_control_data(
-                            stream_id, data, event.end_stream)
-                        return
-                self._on_stream_data(
-                    stream_id, data, event.end_stream)
-                return
-
-            # Bidi streams: d18 request streams, or the d14/d16 control
-            # stream + d16 request streams. All parse control messages via
-            # the reassembling chain ingest (_on_control_data).
-            logger.debug(
-                f"MOQT event: StreamDataReceived: stream: {stream_id} "
-                f"len: {len(data)}")
-
-            # d18: control is a uni pair, so every bidi stream is a request
-            # stream (SUBSCRIBE/FETCH/...). Pre-d18 the first bidi stream is
-            # latched as the single control stream.
-            if self._profile.control_uni_pair:
-                self._on_control_data(stream_id, data, event.end_stream,
-                                      is_request_bidi=True)
-                return
-
-            if self._control_stream_id is None:
-                self._control_stream_id = stream_id
-                logger.debug(f"QUIC event: detecting control stream: {stream_id}")
-            elif stream_id != self._control_stream_id:
-                if is_draft16_or_later(self.negotiated_draft):
-                    self._on_control_data(stream_id, data, event.end_stream,
-                                          is_request_bidi=True)
-                    return
-                logger.warning(f"MOQT event: unrecognized bidirectional stream({stream_id})")
-                return
-
-            if stream_id == self._control_read_stream_id:
-                self._on_control_data(stream_id, data, event.end_stream)
-                return
+            self._ingest_stream_data(stream_id, data, event.end_stream)
 
         elif isinstance(event, DatagramFrameReceived) and self._wt_session_setup.done():
             msg_buf = Buffer(data=event.data)
@@ -1864,12 +1893,12 @@ class _MOQTSessionMixin:
             _drafts = getattr(self._session, 'supported_drafts', None)
             draft = _drafts[0] if _drafts and len(_drafts) == 1 else None
             if draft is not None:
-                self.negotiated_draft = get_major_version(draft)
+                self._settle_draft(get_major_version(draft))
             else:
                 negotiated = self.negotiated_protocol
                 if negotiated:
-                    self.negotiated_draft = get_major_version(
-                        moqt_version_from_alpn(negotiated))
+                    self._settle_draft(get_major_version(
+                        moqt_version_from_alpn(negotiated)))
                     logger.info(
                         f"MOQT: version set from WT-Protocol: "
                         f"{negotiated} -> draft-{self.negotiated_draft}")
@@ -3211,7 +3240,7 @@ class _MOQTSessionMixin:
                     reason_phrase=error
                 )
             else:
-                self.negotiated_draft = selected_draft
+                self._settle_draft(selected_draft)
 
             # indicate moqt session setup is complete
             self._moqt_session_setup.set_result(True)
@@ -3816,7 +3845,7 @@ class MOQTSessionWTServer(
         _drafts = getattr(session, 'supported_drafts', None)
         draft = _drafts[0] if _drafts and len(_drafts) == 1 else None
         if draft is not None:
-            self.negotiated_draft = get_major_version(draft)
+            self._settle_draft(get_major_version(draft))
         else:
             # Learn the client's draft from the WT-Protocol this server
             # selected (in-band WT-Available-Protocols -> WT-Protocol
@@ -3825,6 +3854,6 @@ class MOQTSessionWTServer(
             # negotiated_draft keeps its conservative __init__ default.
             negotiated = self.negotiated_protocol
             if negotiated:
-                self.negotiated_draft = get_major_version(
-                    moqt_version_from_alpn(negotiated))
+                self._settle_draft(get_major_version(
+                    moqt_version_from_alpn(negotiated)))
         self._moqt_wt_finalize()

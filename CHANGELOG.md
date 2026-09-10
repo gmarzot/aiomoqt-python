@@ -18,6 +18,10 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
 - d18 FetchObject encodes an explicit Status on zero-length payloads.
 - Forward State (§5.1) is honored: no objects while a peer signals
   forward=0; LOC tracks resume at a key frame in a new group.
+- Raw-QUIC sessions offering several drafts hold stream bytes that
+  arrive before ProtocolNegotiated and replay them under the settled
+  draft (a d18 peer's control uni was classified with the d14 codec and
+  reset).
 
 ### Features
 - `serve_fetch()`: general publisher FETCH-serving API (delta-coded d18
