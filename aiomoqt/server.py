@@ -1,4 +1,5 @@
 import asyncio
+import socket
 from asyncio.futures import Future
 from typing import Any, List, Optional, Tuple, Union, Coroutine
 
@@ -13,6 +14,24 @@ from .types import moqt_alpn_for_version, normalize_supported_drafts
 from .utils.logger import *
 
 logger = get_logger(__name__)
+
+
+def _check_udp_port_free(host: str, port: int) -> None:
+    """Fail before the transport thread swallows EADDRINUSE. The transport
+    binds every interface (aiopquic takes no bind address), so probe
+    0.0.0.0 and say so when a narrower host was requested."""
+    if port == 0:
+        return
+    if host not in ("", "0.0.0.0"):
+        logger.warning(f"MOQT server: bind address {host} is not supported "
+                       f"by the transport; listening on 0.0.0.0:{port}")
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.bind(("0.0.0.0", port))
+    except OSError as e:
+        raise OSError(f"UDP port {port} unavailable: {e.strerror}") from e
+    finally:
+        probe.close()
 
 
 class MOQTServer(MOQTPeer):
@@ -68,6 +87,7 @@ class MOQTServer(MOQTPeer):
     def serve(self) -> Coroutine[Any, Any, Any]:
         """Start the MOQT server."""
         logger.info(f"Starting MOQT server on {self.host}:{self.port}")
+        _check_udp_port_free(self.host, self.port)
 
         if self.use_quic:
             # Accept one ALPN per supported draft, newest first. A single
@@ -155,6 +175,7 @@ class MOQTServer(MOQTPeer):
         the two-listener --quic-port arrangement."""
         logger.info(
             f"Starting dual-stack MOQT server on {self.host}:{self.port}")
+        _check_udp_port_free(self.host, self.port)
         cfg = QuicConfiguration(
             alpn_protocols=[moqt_alpn_for_version(d)
                             for d in self.supported_drafts],

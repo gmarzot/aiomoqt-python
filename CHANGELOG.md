@@ -44,7 +44,12 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
 
 ### Tests / CI
 - Conformance: standalone fetch section (origin SUT), single-object
-  multi-group case; release workflow gates on the conformance job.
+  multi-group case; release workflow gates on the conformance job;
+  `moq-conformance-matrix.sh` runs relay and origin over raw QUIC and
+  WebTransport at d16 and d18 locally.
+- Servers fail at `serve()` when the UDP port is taken (the transport
+  thread used to swallow EADDRINUSE behind a "Listening" line) and warn
+  that a bind address other than 0.0.0.0 is not honored by the transport.
 - Regression tests for the relay forward loop, REQUEST_UPDATE ids, and
   the d18 renumber table.
 
