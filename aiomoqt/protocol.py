@@ -264,6 +264,9 @@ class _MOQTSessionMixin:
         # through _route_stream_data once the draft is settled.
         self._draft_settled = _pinned is not None
         self._pre_draft_stream_data: Dict[int, Tuple[bytearray, bool]] = {}
+        # d18 REQUEST_UPDATEs we sent, keyed by the updated request's id:
+        # the reply rides that request's stream with no id of its own.
+        self._tx_updates: Dict[int, int] = {}
         # Tombstone map: stream_ids whose state was popped in response
         # to RESET / STOP_SENDING / UNSUBSCRIBE / SubscribeDone teardown.
         # _on_stream_data drops chunks for these — the publisher's
@@ -692,7 +695,11 @@ class _MOQTSessionMixin:
                     not self._profile.reply_has_request_id and
                     hasattr(msg, 'request_id')):
                 if getattr(msg, 'request_id', None) is None:
-                    msg.request_id = request_id
+                    update_id = (self._tx_updates.pop(request_id, None)
+                                 if isinstance(msg, (RequestOk, RequestError))
+                                 else None)
+                    msg.request_id = (request_id if update_id is None
+                                      else update_id)
                 elif isinstance(msg, RequestUpdate):
                     # d18 §10.9: the updated request is the stream's;
                     # answer on the same stream under the update's id.
@@ -2487,6 +2494,100 @@ class _MOQTSessionMixin:
 
         return self._await_response(request_id)
 
+    def track_status(
+        self,
+        namespace: Union[str, Tuple[bytes, ...]],
+        track_name: Union[str, bytes],
+        priority: int = 128,
+        group_order: int = GroupOrder.ASCENDING,
+        forward: int = 1,
+        filter_type: int = FilterType.LATEST_OBJECT,
+        parameters: Optional[Dict[int, Any]] = None,
+        wait_response: bool = False,
+    ):
+        """TRACK_STATUS (§10.14): ask about a track without subscribing.
+        Answered by TRACK_STATUS_OK/ERROR (REQUEST_OK/ERROR at d18)."""
+        request_id = self._allocate_request_id()
+        message = TrackStatus(
+            request_id=request_id,
+            track_namespace=self._make_namespace_tuple(namespace),
+            track_name=(track_name.encode() if isinstance(track_name, str)
+                        else track_name),
+            priority=priority,
+            group_order=group_order,
+            forward=forward,
+            filter_type=filter_type,
+            parameters=parameters or {},
+        )
+        logger.info(f"MOQT send: {message}")
+        self._send_request(request_id, message)
+        if not wait_response:
+            return message
+        return self._await_response(request_id)
+
+    def request_update(
+        self,
+        existing_request_id: int,
+        forward: Optional[int] = None,
+        parameters: Optional[Dict[int, Any]] = None,
+        wait_response: bool = False,
+    ):
+        """REQUEST_UPDATE (§10.9; SUBSCRIBE_UPDATE 0x02 at d16): change
+        the parameters of an outstanding request. d18 sends it on that
+        request's own stream and its REQUEST_OK/ERROR comes back there;
+        d16 uses the control stream with the Existing Request ID."""
+        params = dict(parameters or {})
+        if forward is not None:
+            params[ParamType.FORWARD] = int(forward)
+        request_id = self._allocate_request_id()
+        message = RequestUpdate(request_id=request_id,
+                                existing_request_id=existing_request_id,
+                                parameters=params)
+        logger.info(f"MOQT send: {message}")
+        if self._profile.control_uni_pair:
+            sid = self._bidi_streams.get(existing_request_id)
+            if sid is None:
+                raise MOQTException(
+                    SessionCloseCode.INTERNAL_ERROR,
+                    f"no request stream bound for request_id="
+                    f"{existing_request_id}: cannot send REQUEST_UPDATE")
+            self._tx_updates[existing_request_id] = request_id
+            self.send_stream_message(sid, message)
+        else:
+            self.send_control_message(message)
+        if not wait_response:
+            return message
+        return self._await_response(request_id)
+
+    def publish_ok(
+        self,
+        request_msg: 'Publish',
+        forward: int = 1,
+        priority: int = 128,
+        group_order: int = GroupOrder.ASCENDING,
+        filter_type: int = FilterType.LATEST_OBJECT,
+        start_group: Optional[int] = None,
+        start_object: Optional[int] = None,
+        end_group: Optional[int] = None,
+        parameters: Optional[Dict[int, Any]] = None,
+    ) -> Optional[MOQTMessage]:
+        """Accept a PUBLISH: PUBLISH_OK (0x1E) through d16, REQUEST_OK
+        carrying the same fields as parameters at d18 (§10.5)."""
+        message = PublishOk(
+            request_id=request_msg.request_id,
+            forward=forward,
+            priority=priority,
+            group_order=group_order,
+            filter_type=filter_type,
+            start_group=start_group,
+            start_object=start_object,
+            end_group=end_group,
+            parameters=parameters or {},
+        )
+        logger.info(f"MOQT send: {message}")
+        self._send_reply(request_msg.request_id, message)
+        return message
+
     def subscribe_ok(
         self,
         request_msg: Subscribe,
@@ -3420,11 +3521,11 @@ class _MOQTSessionMixin:
 
     async def _handle_track_status_ok(self, msg: TrackStatusOk) -> None:
         logger.info(f"MOQT event: handle {msg}")
-        # Handle track status response (same format as SUBSCRIBE_OK)
+        self._resolve_request(msg.request_id, msg)
 
     async def _handle_track_status_error(self, msg: TrackStatusError) -> None:
         logger.info(f"MOQT event: handle {msg}")
-        # Handle track status error (same format as SUBSCRIBE_ERROR)
+        self._resolve_request(msg.request_id, msg)
 
     async def _handle_goaway(self, msg: GoAway) -> None:
         logger.info(f"MOQT event: handle {msg}")

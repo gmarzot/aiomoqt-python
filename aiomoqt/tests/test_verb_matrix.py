@@ -19,6 +19,7 @@ from aiomoqt.protocol import _MOQTSessionMixin, MOQTSessionQuic
 from aiomoqt.context import profile_for
 from aiomoqt.types import CONTROL_MESSAGE_TYPES
 from aiomoqt.messages.subscribe import Subscribe
+from aiomoqt.messages.publish import Publish
 from aiomoqt.messages.namespace import (
     PublishNamespace, SubscribeNamespace, SubscribeTracks,
 )
@@ -48,6 +49,7 @@ def _session(draft, is_client=True):
     s._fetch_done_futures = {}
     s._bidi_streams = {7: 9}
     s._bidi_stream_requests = {9: 7}
+    s._tx_updates = {}
     s._request_cancel_handlers = {}
     s._peer_request_max = -1
     s._peer_goaway = False
@@ -157,6 +159,17 @@ MATRIX = [
                          parameters={}))),
     ("namespace", (16, 18), "nsreply",
      lambda s: s.namespace(namespace_suffix=(b"a",), stream_id=9)),
+    # -- formerly GAPS --
+    ("track_status", (14, 16, 18), "request",
+     lambda s: s.track_status(namespace=(b"a",), track_name="t")),
+    # d16: control stream with Existing Request ID; d18: the updated
+    # request's own stream (bound 7 -> 9 in the stub).
+    ("request_update", (16, 18), "reply",
+     lambda s: s.request_update(existing_request_id=7, forward=1)),
+    ("publish_ok", (14, 16, 18), "reply",
+     lambda s: s.publish_ok(request_msg=Publish(
+         request_id=7, track_namespace=(b"a",), track_name=b"t",
+         track_alias=1))),
 ]
 
 
@@ -199,7 +212,7 @@ def test_verb_emits_a_legal_frame(name, drafts, expected, call):
 # Closing a gap must update this list, so the matrix stays the single
 # statement of API completeness.
 
-GAPS = ["track_status", "request_update", "publish_ok"]
+GAPS: list = []
 
 
 @pytest.mark.parametrize("verb", GAPS)

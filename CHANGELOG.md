@@ -24,6 +24,9 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
   reset).
 
 ### Features
+- Verb surface complete: `track_status()`, `request_update()` (d18 on
+  the updated request's stream, its reply attributed to the update) and
+  `publish_ok()` as first-class sends; the verb-matrix GAPS list is empty.
 - `serve_fetch()`: general publisher FETCH-serving API (delta-coded d18
   fetch objects, group order, `fin=` control).
 - moqtest origin serves standalone FETCH (fp 0-2, markers on/off,

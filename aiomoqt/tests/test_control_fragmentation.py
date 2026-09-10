@@ -38,6 +38,7 @@ def _control_session(draft):
     s._control_chains = {}
     s._bidi_stream_requests = {}
     s._bidi_streams = {}
+    s._tx_updates = {}
     s._d18_control_read_sid = None
     s._control_stream_id = None
     s._closed = []
