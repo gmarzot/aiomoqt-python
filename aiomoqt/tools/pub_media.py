@@ -182,7 +182,7 @@ def _open_live_h264(args):
     asm = AnnexBAssembler()
     first = []
     while asm.config is None:
-        chunk = fh.read(65536)
+        chunk = fh.read1(65536)
         if not chunk:
             raise SystemExit('  error: h264 stream ended before SPS/PPS')
         first += asm.feed(chunk)
@@ -199,7 +199,8 @@ async def _feed_h264_live(track, fh, asm, first, args, stats):
             await _send(track, stats, payload, key)
         if eof or time.monotonic() >= deadline:
             break
-        chunk = await loop.run_in_executor(None, fh.read, 65536)
+        # read1: return on first available bytes; read(n) waits for 64 KB.
+        chunk = await loop.run_in_executor(None, fh.read1, 65536)
         if chunk:
             frames = asm.feed(chunk)
         else:
