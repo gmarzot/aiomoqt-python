@@ -1,5 +1,89 @@
 # Changelog
 
+## v0.11.0rc6 (unreleased)
+
+Pairs with aiopquic 0.4.0rc1 (unchanged).
+
+### Wire fixes
+- d18 REQUEST_UPDATE keeps its own Request ID (the stream-bound id is
+  no longer injected over it); the updated request rides
+  `existing_request_id`; §10.1 parity/increase applies to updates.
+- The type-legality guard now covers request-stream sends, so a message
+  a draft does not define can never leave on any stream.
+- d18 code-point renumbers (SUBSCRIBE_NAMESPACE 0x11→0x50, PUBLISH_OK
+  0x1E→REQUEST_OK 0x07) live in one table used by serializers and guard.
+- SUBSCRIBE_NAMESPACE/SUBSCRIBE_TRACKS acks and NAMESPACE answer on the
+  request's own stream (d16 and d18); no control-stream fallback.
+- Largest Location is a max, and base tracks report it (ContentExists).
+- d18 FetchObject encodes an explicit Status on zero-length payloads.
+- Forward State (§5.1) is honored: no objects while a peer signals
+  forward=0; LOC tracks resume at a key frame in a new group.
+
+### Features
+- `serve_fetch()`: general publisher FETCH-serving API (delta-coded d18
+  fetch objects, group order, `fin=` control).
+- moqtest origin serves standalone FETCH (fp 0-2, markers on/off,
+  partial ranges, single object) green against moxygen's moqtest_client
+  at d16 and d18; End Location exclusive per §10.13.
+- pub_media: `--pub-ns`/`--pub-both`, `--forward {0,1}`,
+  `--catalog-interval`; short pipe reads on the live H.264 path.
+- load_sim: `viewers` scenario (headless audience against a live
+  broadcast).
+
+### Relay (`tools.moq_interop_relay`)
+- Subgroup-END queue entry arity fixed (a forward loop died on the first
+  upstream subgroup close).
+- WT teardown grace: CONNECTION_CLOSE reaches the wire.
+
+### Tests / CI
+- Conformance: standalone fetch section (origin SUT), single-object
+  multi-group case; release workflow gates on the conformance job.
+- Regression tests for the relay forward loop, REQUEST_UPDATE ids, and
+  the d18 renumber table.
+
+## v0.11.0rc5
+
+Pairs with aiopquic 0.4.0rc1 (unchanged).
+
+- Reject unknown subscription filter types (§5.1.2).
+- moqtest origin: the bare server-role API as a second conformance SUT
+  (subscribe modes 12/12 against moxygen, gating).
+- Verb-surface matrix oracle (`test_verb_matrix.py`) with a ratcheted
+  GAPS list.
+- load_sim accepts `--compat`.
+
+## v0.11.0rc4
+
+Pairs with aiopquic 0.4.0rc1 (unchanged). Strict-peer conformance sweep:
+
+- RX dispatches exactly the control types each draft defines; unknown
+  types close the session (import-time table assertion).
+- Terminating a request stream cancels the request (§3.3.2).
+- Peer request ids validated for parity and strict increase (§10.1).
+- Stream-placement rules for control messages enforced (§3.3, §10).
+- d18 Message Parameters decoded by definition; unknown is fatal.
+- REQUEST_UPDATE and TRACK_STATUS answered instead of hanging the peer.
+- SETUP validation (§10.3.1); GOAWAY send API and receive MUSTs (§10.4).
+- §15.10.4 stream-reset code space; sibling subgroup priority.
+- Relay: SUBSCRIBE_TRACKS → PUBLISH fan-out (§9.5); charter documented.
+
+## v0.11.0rc3
+
+Pairs with aiopquic 0.4.0rc1 (unchanged). Wire/flow sweep (rc1/rc2 are
+broken against moxygen d18; do not use):
+
+- Location parameters encoded as two bare varints (d18 §10.2).
+- PUBLISH_OK / PUBLISH_DONE / relay REQUEST_ERROR ride the request
+  stream; reply-class messages refused on the d18 control stream.
+- PUBLISH_OK is 0x1E through d16; d18 replies with REQUEST_OK, and the
+  d18 PUBLISH acceptance is correlated by request id.
+- d18 GOAWAY carries Timeout and Request ID (§10.4).
+- Draft-correct error replies, d18 cancellation, FETCH group order.
+- d16 merged datagrams, PUBLISH_DONE code renumber, priority latch,
+  FETCH prior.
+- FINs are transmitted before CONNECTION_CLOSE on session close.
+- CI: moq-test conformance job (d16 + d18) gating.
+
 ## v0.11.0rc2
 
 Pairs with aiopquic 0.4.0rc1 (unchanged).
