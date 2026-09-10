@@ -102,6 +102,7 @@ class _Prof:
         self.vi64 = vi64
         self.draft = 18 if vi64 else 16
         self.params_delta_coded = True  # KVP delta types, d16+ §1.4.2
+        self.merged_datagram_layout = True
 
 
 def test_d18_extensions_use_vi64_not_standard_varint():

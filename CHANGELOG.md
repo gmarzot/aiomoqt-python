@@ -22,6 +22,9 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
   arrive before ProtocolNegotiated and replay them under the settled
   draft (a d18 peer's control uni was classified with the d14 codec and
   reset).
+- d16 status datagrams use the merged OBJECT_DATAGRAM layout (STATUS
+  0x20 / DEFAULT_PRIORITY 0x08, RFC 9000 varints); they were emitted in
+  the d14 shape. `DraftProfile.merged_datagram_layout` gates TX and RX.
 
 ### Features
 - Verb surface complete: `track_status()`, `request_update()` (d18 on

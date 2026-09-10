@@ -928,12 +928,13 @@ class ObjectDatagram(MOQTMessage):
 
     def serialize(self, prof: Optional[DraftProfile] = None) -> Buffer:
         vi64 = prof is not None and prof.vi64
+        merged = prof is not None and prof.merged_datagram_layout
         has_extensions = self.extensions is not None and len(self.extensions) > 0
         no_object_id = (self.object_id == 0)
-        is_status = self.status != ObjectStatus.NORMAL
+        is_status = merged and self.status != ObjectStatus.NORMAL
 
-        if vi64:
-            # d18 form 0b00X0XXXX: PROPERTIES 0x01, END_OF_GROUP 0x02,
+        if merged:
+            # d16+ form 0b00X0XXXX: PROPERTIES 0x01, END_OF_GROUP 0x02,
             # ZERO_OBJECT_ID 0x04, DEFAULT_PRIORITY 0x08, STATUS 0x20.
             type_val = OBJECT_DATAGRAM_BASE
             if has_extensions:
@@ -944,9 +945,8 @@ class ObjectDatagram(MOQTMessage):
                 type_val |= 0x04
             if is_status:
                 type_val |= 0x20
-            push = lambda v: buf_obj.push_uint_vi64(v)  # noqa: E731
         else:
-            # d14/d16 form: bits 0=ext, 1=eog, 2=no_obj_id (no STATUS bit;
+            # d14 form: bits 0=ext, 1=eog, 2=no_obj_id (no STATUS bit;
             # status datagrams use ObjectDatagramStatus).
             type_val = OBJECT_DATAGRAM_BASE
             if has_extensions:
@@ -955,6 +955,9 @@ class ObjectDatagram(MOQTMessage):
                 type_val |= 0x02
             if no_object_id:
                 type_val |= 0x04
+        if vi64:
+            push = lambda v: buf_obj.push_uint_vi64(v)  # noqa: E731
+        else:
             push = lambda v: buf_obj.push_uint_var(v)  # noqa: E731
 
         payload_len = 0 if self.payload is None else len(self.payload)
@@ -969,7 +972,7 @@ class ObjectDatagram(MOQTMessage):
             MOQTMessage._extensions_encode(
                 buf_obj, self.extensions,
                 delta=prof is not None and prof.params_delta_coded)
-        if vi64 and is_status:
+        if is_status:
             push(int(self.status))
         elif payload_len > 0:
             buf_obj.push_bytes(self.payload)
@@ -985,14 +988,11 @@ class ObjectDatagram(MOQTMessage):
         extensions_present = bool(type_val & 0x01)
         end_of_group = bool(type_val & 0x02)
         no_object_id = bool(type_val & 0x04)
-        # STATUS bit is part of the merged d16+ layout, not d18-only.
-        is_status = bool(type_val & 0x20) and (
-            vi64 or (prof is not None and prof.draft >= 16))
-        # DEFAULT_PRIORITY (0x08): priority byte omitted on the wire.
-        # d16 introduced it; d18 keeps it. d14 has no such bit (types
-        # cap at 0x07 in dispatch, so it can't reach here).
-        default_priority = bool(type_val & 0x08) and (
-            vi64 or (prof is not None and prof.draft >= 16))
+        merged = prof is not None and prof.merged_datagram_layout
+        # STATUS 0x20 and DEFAULT_PRIORITY 0x08 (priority byte omitted)
+        # exist only in the merged d16+ layout; d14 types cap at 0x07.
+        is_status = merged and bool(type_val & 0x20)
+        default_priority = merged and bool(type_val & 0x08)
 
         track_alias = pull()
         group_id = pull()

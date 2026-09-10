@@ -55,6 +55,11 @@ class DraftProfile:
                                   # SUBSCRIBE_TRACKS then asks one namespace
                                   # for its tracks (PUBLISH). d14/d16 fuse
                                   # both into SUBSCRIBE_NAMESPACE.
+    merged_datagram_layout: bool = False
+                                  # d16+ OBJECT_DATAGRAM type 0b00X0XXXX with
+                                  # DEFAULT_PRIORITY 0x08 and STATUS 0x20
+                                  # (status datagrams fold into the object
+                                  # datagram); d14 keeps OBJECT_DATAGRAM_STATUS.
 
     @property
     def vi64(self) -> bool:
@@ -74,7 +79,8 @@ PROFILES = {
         draft=MOQTDraft.DRAFT_16, setup_carries_versions=False,
         params_delta_coded=True, varint="rfc9000",
         control_uni_pair=False, reply_has_request_id=True,
-        uint8_params=frozenset()),
+        uint8_params=frozenset(),
+        merged_datagram_layout=True),
     # draft-18 negotiates out-of-band (ALPN/WT-Protocol) like d16 and uses
     # delta-coded params, but forks the wire codec to vi64, runs control over
     # a pair of uni streams, drops the Request ID from request replies, and
@@ -89,7 +95,8 @@ PROFILES = {
             ParamType.GROUP_ORDER,
         }),
         location_params=frozenset({ParamType.LARGEST_OBJECT}),
-        two_level_discovery=True),
+        two_level_discovery=True,
+        merged_datagram_layout=True),
 }
 
 
