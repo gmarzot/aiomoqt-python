@@ -95,8 +95,14 @@ jobs:
         name: regression-logs-py${{ matrix.python-version }}
         path: /tmp/aiomoqt-regression.*/
 
+  conformance:
+    needs: tag
+    uses: ./.github/workflows/moq-conformance.yml
+    with:
+      ref: ${{ needs.tag.outputs.version }}
+
   publish-test:
-    needs: [tag, test]
+    needs: [tag, test, conformance]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
