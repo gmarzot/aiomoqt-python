@@ -17,8 +17,6 @@ Deliberately absent, and staying absent:
   * NO delivery-timeout enforcement
   * Namespace tables are in-memory and global to the process
 
-Use moxygen, moq-rs, or another real relay for any actual workload.
-
 Routing model (cross-session, single relay instance):
   - PUBLISH_NAMESPACE: record the announcing session under the
     namespace tuple, respond with the protocol's default RequestOk
@@ -241,7 +239,8 @@ class _RelayedTrack:
         """Upstream closed a subgroup stream: end ours the same way so
         the subscriber sees a clean group end rather than a reset."""
         self.queue.put_nowait(
-            (group_id, subgroup_id or 0, None, None, None, None, "END"))
+            (group_id, subgroup_id or 0, None, None, None, None, "END",
+             None))
 
     def on_object(self, msg, size, ts, group_id, subgroup_id):
         """Upstream delivery callback (sync) — hand off to the drain."""
@@ -789,7 +788,7 @@ async def main():
     )
     print("aiomoqt ERSATZ-RELAY: an API demonstrator and conformance "
           "SUT — not a production relay (no auth, no cache, no "
-          "hardening). Use moxygen/moq-rs for real workloads.",
+          "hardening).",
           file=sys.stderr)
 
     cert = args.cert or _find_default_cert()
@@ -839,7 +838,7 @@ async def main():
         "=" * 64
         + "\n EXPERIMENTAL aiomoqt interop relay.\n"
         " NOT a production relay: no group cache, no auth,\n"
-        " no scale handling. Use moxygen / moq-rs for real workloads.\n"
+        " no scale handling.\n"
         + "=" * 64,
         file=sys.stderr,
     )
