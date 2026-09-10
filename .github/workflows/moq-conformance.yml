@@ -37,6 +37,12 @@ on:
         description: 'Branch or SHA to test (defaults to the current ref)'
         required: false
         type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Branch, tag or SHA to test'
+        required: false
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -151,7 +157,7 @@ jobs:
           ORIGIN_PID=$!
           trap 'kill $ORIGIN_PID 2>/dev/null || true' EXIT
           sleep 3
-          SKIP_PUBLISH=1 bash .github/scripts/moq-conformance.sh 2>&1 \
+          SKIP_PUBLISH=1 FETCH=1 bash .github/scripts/moq-conformance.sh 2>&1 \
             | tee origin-conformance.log
 
       - name: Upload logs

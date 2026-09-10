@@ -2731,13 +2731,15 @@ class _MOQTSessionMixin:
         return message
 
     async def serve_fetch(self, request_id: int, objects, *,
-                          group_order: int = GroupOrder.ASCENDING) -> int:
+                          group_order: int = GroupOrder.ASCENDING,
+                          fin: bool = True) -> int:
         """Serve a FETCH's objects on its own uni stream (§10.13).
 
         Opens the fetch data stream, writes FETCH_HEADER, then each
         FetchObject in ascending order as a delta-coded object, then
-        FINs. `objects` is any iterable of FetchObject. Call fetch_ok()
-        first (its End Location must be known). Returns the stream id."""
+        FINs unless `fin=False` (the caller then owns the FIN).
+        `objects` is any iterable of FetchObject. Call fetch_ok() first
+        (its End Location must be known). Returns the stream id."""
         stream_id = await self.open_uni_stream()
         header = FetchHeader(request_id=request_id)
         self.stream_write(stream_id, header.serialize(prof=self._profile).data)
@@ -2757,7 +2759,8 @@ class _MOQTSessionMixin:
                     subgroup_id=(prior.subgroup_id if prior else -1),
                     publisher_priority=(prior.publisher_priority
                                         if prior else -1))
-        self.stream_fin(stream_id)
+        if fin:
+            self.stream_fin(stream_id)
         return stream_id
 
     def fetch_error(

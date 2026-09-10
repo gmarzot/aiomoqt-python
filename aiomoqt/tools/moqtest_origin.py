@@ -284,7 +284,9 @@ def _fetch_objects(p: TestParams, win, descending: bool = False):
     markers = p.markers and p.fp != 3
     groups = range(fg, lg + 1, p.g_inc)
     for g in (reversed(groups) if descending else groups):
-        first_o = fo if g == fg else p.start_object
+        # The track has no objects below its own start object, whatever
+        # the FETCH Start Location says.
+        first_o = max(fo, p.start_object) if g == fg else p.start_object
         last_o = lo if (g == lg and lo) else p.last_object
         for oid in range(first_o, last_o + 1, p.o_inc):
             sg = _fetch_subgroup(p, oid)
@@ -332,20 +334,30 @@ async def _on_fetch(session, msg):
                      largest_object_id=end_obj,
                      end_of_track=1 if reaches_end else 0,
                      group_order=order)
-    # FETCH_OK is terminal on the request stream (§3.3.2); the objects
-    # ride a separate uni stream. FIN the request stream so the peer
-    # stops waiting on it.
-    _fin = session._bidi_streams.get(msg.request_id)
-    if _fin is not None:
-        session.stream_fin(_fin)
+    # §3.3.2: the publisher FINs the request stream only on the reject
+    # path; on success the subscriber closes it once all data arrived.
     logger.info(f"origin: FETCH fp={p.fp} window={fg}.{fo}..{lg} "
                 f"order={int(order)}")
     objs = list(_fetch_objects(
         p, win, descending=(order == GroupOrder.DESCENDING)))
-    task = asyncio.create_task(session.serve_fetch(
-        msg.request_id, objs, group_order=order))
+    task = asyncio.create_task(_serve_fetch_stream(session, msg.request_id,
+                                                   objs, order))
     session.register_request_cancel_handler(
         msg.request_id, lambda rid: task.cancel())
+
+
+# moqtest_client reaches no verdict when the FIN shares a read with the
+# last object (it tears the fetch down inside that object's callback);
+# moxygen's own server FINs after its objectFrequency pause. Give the FIN
+# its own packet.
+FETCH_FIN_GAP_S = 0.005
+
+
+async def _serve_fetch_stream(session, request_id, objs, order):
+    sid = await session.serve_fetch(request_id, objs, group_order=order,
+                                    fin=False)
+    await asyncio.sleep(FETCH_FIN_GAP_S)
+    session.stream_fin(sid)
 
 
 async def _on_subscribe(session, msg):

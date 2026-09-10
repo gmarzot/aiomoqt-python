@@ -52,6 +52,10 @@ run_case "many objects per group" --request=subscribe \
 run_case "custom start group" --request=subscribe \
   --forwarding_preference=0 --start_group=5 --last_group=7 \
   --objects_per_group=3
+# One object per group over several groups: a relay whose forward loop dies
+# at the first subgroup end drops every later group.
+run_case "many single-object groups" --request=subscribe \
+  --forwarding_preference=0 --last_group=5 --objects_per_group=1
 
 echo
 echo "Section 3 — object sizes"
@@ -79,6 +83,24 @@ run_case "variable extension" --request=subscribe --forwarding_preference=0 \
 run_case "both extensions" --request=subscribe --forwarding_preference=0 \
   --last_group=1 --objects_per_group=5 --test_integer_extension=1 \
   --test_variable_extension=2
+
+# Standalone FETCH: served by the origin SUT only (the relay has no cache).
+# fp=3 is not a fetch case (the client refuses datagram preference for FETCH).
+if [ "${FETCH:-0}" = "1" ]; then
+  echo
+  echo "Section 4 — standalone fetch"
+  for fp in 0 1 2; do
+    run_case "fetch fp=$fp" --request=fetch --forwarding_preference="$fp" \
+      --last_group=2 --objects_per_group=5
+    run_case "fetch fp=$fp markers" --request=fetch \
+      --forwarding_preference="$fp" --last_group=2 --objects_per_group=5 \
+      --send_end_of_group_markers
+  done
+  run_case "fetch partial range" --request=fetch --forwarding_preference=0 \
+    --start_group=1 --start_object=2 --last_group=2 --objects_per_group=5
+  run_case "fetch single object" --request=fetch --forwarding_preference=0 \
+    --last_group=0 --objects_per_group=1
+fi
 
 rm -f "/tmp/case-$$.log"
 echo
