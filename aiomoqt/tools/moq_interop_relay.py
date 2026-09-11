@@ -253,6 +253,11 @@ class _RelayedTrack:
             self.finish(SubscribeDoneCode.MALFORMED_TRACK,
                         reset_code=StreamResetCode.MALFORMED_TRACK,
                         reason="malformed track")
+            # Nothing from this track may be served or cached (§2.4.2):
+            # drop the fan-out so a later SUBSCRIBE starts clean rather
+            # than joining a dead one.
+            _tracks.pop(self.key, None)
+            self.close()
             return
         self.queue.put_nowait(
             (group_id, subgroup_id or 0, None, None, None, None,

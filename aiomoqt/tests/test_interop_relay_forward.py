@@ -14,6 +14,7 @@ class _Downstream:
         self._profile = profile_for(18)
         self._next = 3
         self.writes = []            # (stream_id, nbytes, fin)
+        self.dones = []             # (request_id, PUBLISH_DONE status)
 
     async def open_uni_stream(self):
         sid = self._next
@@ -27,7 +28,11 @@ class _Downstream:
         self.writes.append((sid, len(data), False))
 
     def stream_reset(self, sid, code):
-        self.writes.append((sid, "reset", code))
+        self.writes.append((sid, "reset", int(code)))
+
+    def subscribe_done(self, request_id, status_code=0, stream_count=0,
+                       reason=""):
+        self.dones.append((request_id, int(status_code)))
 
 
 @pytest.mark.asyncio
@@ -78,3 +83,33 @@ class _Obj:
         self.publisher_priority = 128
         self.status = None
         self.stream_flags = None
+
+
+@pytest.mark.asyncio
+async def test_malformed_upstream_ends_downstream_and_drops_the_fanout():
+    # §2.4.2: a relay that detects a malformed track terminates every
+    # downstream subscription with PUBLISH_DONE MALFORMED_TRACK, resets
+    # their streams, and serves nothing further from that track.
+    from aiomoqt.tools.moq_interop_relay import _tracks
+    from aiomoqt.types import StreamResetCode, SubscribeDoneCode
+
+    key = ("mal-ns", "t")
+    track = _RelayedTrack(key)
+    down = _Downstream()
+    track.downstream.append((down, 7, 1))
+    _tracks[key] = track
+    loop_task = asyncio.create_task(track._forward_loop())
+    try:
+        track.on_object(_Obj(group_id=0, object_id=0), 0, 0, 0, 0)
+        for _ in range(20):
+            await asyncio.sleep(0)
+        track.on_stream_end(0, 0, clean=False,
+                            reset_code=StreamResetCode.MALFORMED_TRACK)
+
+        assert down.dones == [(1, int(SubscribeDoneCode.MALFORMED_TRACK))]
+        assert (3, "reset", int(StreamResetCode.MALFORMED_TRACK)) in down.writes
+        assert not any(fin is True for _sid, _n, fin in down.writes)
+        assert key not in _tracks                  # a later SUBSCRIBE starts clean
+    finally:
+        loop_task.cancel()
+        _tracks.pop(key, None)
