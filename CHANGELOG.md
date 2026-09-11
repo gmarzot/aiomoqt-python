@@ -60,9 +60,6 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
   protocol violation. Servers now advertise MAX_REQUEST_ID in
   SERVER_SETUP (they never did). A peer that omits the Setup parameter
   leaves us unlimited rather than the spec's zero.
-- Release regression: a pub-sub leg that subscribes but delivers zero
-  objects now FAILS unless the relay carries the compat key
-  `zero-objects-tolerated` (cf-d16-interop, a known non-forwarder).
 - A FIN in the middle of a serialized Object closes the session with
   PROTOCOL_VIOLATION (§11.4); the partial object used to be discarded
   silently. A FIN inside the stream header stays a stream-level fault.
@@ -110,6 +107,12 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
   that a bind address other than 0.0.0.0 is not honored by the transport.
 - Regression tests for the relay forward loop, REQUEST_UPDATE ids, and
   the d18 renumber table.
+- A pub-sub leg that subscribes but delivers zero objects now FAILS
+  unless the relay carries the compat key `zero-objects-tolerated`
+  (cf-d16-interop, a known non-forwarder); `tests/relays.json`
+  documents the compat keys.
+- New suites for malformed tracks, the receive-side MUST-close rules,
+  terminal-reply FINs, request-id credit, and the stream reaper.
 
 ## v0.11.0rc5
 
