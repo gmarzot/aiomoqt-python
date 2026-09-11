@@ -63,6 +63,11 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
 - Release regression: a pub-sub leg that subscribes but delivers zero
   objects now FAILS unless the relay carries the compat key
   `zero-objects-tolerated` (cf-d16-interop, a known non-forwarder).
+- Orphan data streams are reaped: a uni stream whose header has not
+  parsed within 5 s (`STREAM_BIND_DEADLINE_S`) gets STOP_SENDING
+  DELIVERY_TIMEOUT instead of pinning its bytes and stream credit for
+  the session's life. The reaper runs once a second only while data
+  streams are open.
 - RequestErrorCode gains the d18 codes (GOING_AWAY, EXCESSIVE_LOAD,
   NAMESPACE_TOO_LARGE, UNSUPPORTED_EXTENSION, REDIRECT) and REQUEST_ERROR
   carries the §10.6.1 Redirect structure with REDIRECT at d18.

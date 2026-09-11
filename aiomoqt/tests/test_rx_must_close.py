@@ -4,6 +4,7 @@ datagram PROPERTIES bit with no properties, an over-long reason phrase,
 and a namespace with more than 32 fields all close the session with
 PROTOCOL_VIOLATION."""
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -40,6 +41,8 @@ def _stub(draft):
     s._track_bound = {}
     s._object_handlers = {}
     s._track_default_priority = {}
+    s._loop = SimpleNamespace(call_later=lambda delay, cb: SimpleNamespace(
+        cancel=lambda: None))
     s.delivered = []
     s.closed = []
     s.stopped = []

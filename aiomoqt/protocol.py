@@ -120,7 +120,8 @@ class _DataStreamState:
             ('fetch', request_id) or
             ('subgroup', (track_alias, group_id, subgroup_id)).
     bytes_total: cumulative bytes successfully parsed (forensic).
-    last_activity: monotonic ts of last successful parse (idle reaper).
+    last_activity: monotonic ts the stream was first seen (binding-
+            deadline reaper).
     group_id / subgroup_id / object_id: progress across parse calls
             (was function-local in the deleted _process_data_stream).
     """
@@ -898,6 +899,35 @@ class _MOQTSessionMixin:
                 fut.set_result(error_code == QuicErrorCode.NO_ERROR)
         self._unbind_key(key)
 
+    # A uni data stream whose header has not parsed within the deadline
+    # is abandoned (STOP_SENDING): its bytes and stream credit would
+    # otherwise stay pinned for the session's life.
+    STREAM_BIND_DEADLINE_S = 5.0
+    STREAM_REAPER_PERIOD_S = 1.0
+    _reaper_handle = None
+
+    def _schedule_stream_reaper(self) -> None:
+        if self._reaper_handle is None:
+            self._reaper_handle = self._loop.call_later(
+                self.STREAM_REAPER_PERIOD_S, self._reap_streams)
+
+    def _reap_streams(self) -> None:
+        """Drop header-less uni streams past the binding deadline; runs
+        once a period while any data stream is open."""
+        self._reaper_handle = None
+        if self._close_err is not None:
+            return
+        cutoff = time.monotonic() - self.STREAM_BIND_DEADLINE_S
+        for sid, state in list(self._data_streams.items()):
+            if state.parser is None and state.last_activity < cutoff:
+                held = getattr(state.chain, 'capacity', 0)
+                self._reject_stream(
+                    sid, StreamResetCode.DELIVERY_TIMEOUT,
+                    f"no stream header within "
+                    f"{self.STREAM_BIND_DEADLINE_S:g}s ({held} bytes held)")
+        if self._data_streams:
+            self._schedule_stream_reaper()
+
     def _mark_stream_torn_down(self, stream_id: int) -> None:
         """Mark a stream torn down so subsequent in-flight chunks are
         dropped rather than recreating fresh state (which would parse-
@@ -927,8 +957,10 @@ class _MOQTSessionMixin:
             return
         state = self._data_streams.get(stream_id)
         if state is None:
-            state = _DataStreamState(chain=StreamChain())
+            state = _DataStreamState(chain=StreamChain(),
+                                     last_activity=time.monotonic())
             self._data_streams[stream_id] = state
+            self._schedule_stream_reaper()
 
         if data and len(data) > 0:
             state.chain.extend(data)
@@ -1956,6 +1988,9 @@ class _MOQTSessionMixin:
         else:
             logger.error(f"MOQT error: closing: {reason_phrase} ({error_code})")
         self._close_err = (error_code, reason_phrase)
+        if self._reaper_handle is not None:
+            self._reaper_handle.cancel()
+            self._reaper_handle = None
 
         # Tombstone every stream_id so any in-flight chunks landing
         # after this point are dropped rather than recreating state.
