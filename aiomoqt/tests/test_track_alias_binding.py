@@ -214,6 +214,7 @@ def _session_stub(draft=18):
     from aiomoqt.protocol import _MOQTSessionMixin
     s = object.__new__(_MOQTSessionMixin)
     s._track_aliases = {}
+    s._malformed_aliases = set()
     s._unbound_aliases = {}
     s._unbound_escalated = set()
     return s

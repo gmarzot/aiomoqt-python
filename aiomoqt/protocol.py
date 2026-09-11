@@ -267,6 +267,14 @@ class _MOQTSessionMixin:
         # d18 REQUEST_UPDATEs we sent, keyed by the updated request's id:
         # the reply rides that request's stream with no id of its own.
         self._tx_updates: Dict[int, int] = {}
+        # Track aliases found malformed (§2.4.2): subscription cancelled,
+        # further streams refused.
+        self._malformed_aliases: Set[int] = set()
+        # alias -> {group_id: first object id that does not exist}, from
+        # END_OF_GROUP status objects and FIN on END_OF_GROUP-bit streams.
+        self._group_bound: Dict[int, Dict[int, int]] = {}
+        # alias -> (group_id, object_id) location from END_OF_TRACK.
+        self._track_bound: Dict[int, Tuple[int, int]] = {}
         # Tombstone map: stream_ids whose state was popped in response
         # to RESET / STOP_SENDING / UNSUBSCRIBE / SubscribeDone teardown.
         # _on_stream_data drops chunks for these — the publisher's
@@ -844,6 +852,12 @@ class _MOQTSessionMixin:
         key = state.key if state is not None else None
         if key and len(key) == 2 and key[0] == 'subgroup':
             alias, group_id, subgroup_id = key[1]
+            # §11.4.2: FIN on an END_OF_GROUP-bit stream fixes the
+            # group's final object.
+            if (error_code == QuicErrorCode.NO_ERROR
+                    and state.object_id is not None
+                    and getattr(state.parser, 'end_of_group', False)):
+                self._set_group_bound(alias, group_id, state.object_id + 1)
             cb = self._stream_end_handlers.get(alias)
             if cb:
                 try:
@@ -972,9 +986,23 @@ class _MOQTSessionMixin:
             chain.commit()
 
             if isinstance(msg_obj, ObjectHeader):
-                assert (state.object_id is None
-                        or msg_obj.object_id > state.object_id)
+                hdr = state.parser
+                alias = getattr(hdr, 'track_alias', None)
+                if (state.object_id is not None
+                        and msg_obj.object_id <= state.object_id):
+                    self._malformed_track(
+                        alias, f"object {msg_obj.object_id} after "
+                        f"{state.object_id} on one subgroup stream",
+                        stream_id)
+                    return
                 state.object_id = msg_obj.object_id
+                if self._group_bound or self._track_bound:
+                    reason = self._object_out_of_bounds(
+                        alias, state.group_id, msg_obj.object_id,
+                        msg_obj.status)
+                    if reason is not None:
+                        self._malformed_track(alias, reason, stream_id)
+                        return
                 # END_OF_GROUP / END_OF_TRACK are delivered, not
                 # swallowed: they are part of the track's delivery
                 # semantics and a relay has to forward them. Consumers
@@ -983,12 +1011,9 @@ class _MOQTSessionMixin:
                     ObjectStatus.END_OF_GROUP,
                     ObjectStatus.END_OF_TRACK,
                 )
-                cb = self._object_cb(getattr(state.parser, 'track_alias',
-                                             None))
+                cb = self._object_cb(alias)
                 if cb:
                     now = int(time.time() * 1_000_000)
-                    hdr = state.parser
-                    alias = getattr(hdr, 'track_alias', None)
                     if getattr(hdr, 'default_priority', False):
                         msg_obj.publisher_priority = (
                             self._track_default_priority.get(
@@ -1004,11 +1029,17 @@ class _MOQTSessionMixin:
                     cb(msg_obj, consumed, now,
                        state.group_id, state.subgroup_id)
                 if terminal:
+                    self._note_object_bound(alias, state.group_id,
+                                            msg_obj.object_id, msg_obj.status)
                     self._cleanup_stream(stream_id)
                     return
             elif isinstance(msg_obj, SubgroupHeader):
-                assert (state.group_id is None
-                        or msg_obj.group_id > state.group_id)
+                if state.group_id is not None:
+                    self._malformed_track(
+                        getattr(state.parser, 'track_alias', None),
+                        f"second subgroup header (group "
+                        f"{msg_obj.group_id}) on one stream", stream_id)
+                    return
                 state.group_id = msg_obj.group_id
                 state.subgroup_id = msg_obj.subgroup_id
                 state.publisher_priority = msg_obj.publisher_priority
@@ -1042,7 +1073,80 @@ class _MOQTSessionMixin:
         logger.warning(f"MOQT stream({stream_id}): rejecting: "
                        f"{reason} (code=0x{error_code:x})")
         self.stream_stop_sending(stream_id, error_code)
-        self._cleanup_stream(stream_id, QuicErrorCode.APPLICATION_ERROR)
+        self._cleanup_stream(stream_id, QuicErrorCode.APPLICATION_ERROR,
+                             reset_code=int(error_code))
+
+    def _malformed_track(self, alias: Optional[int], reason: str,
+                         stream_id: Optional[int] = None) -> None:
+        """§2.4.2: reset the offending stream (and every other open
+        stream of the track) with MALFORMED_TRACK, cancel the
+        subscription, refuse the track's later streams; the session
+        stays up. Stream-end handlers see reset_code MALFORMED_TRACK."""
+        logger.error(f"MOQT: malformed track alias={alias}: {reason}")
+        if stream_id is not None:
+            self._reject_stream(stream_id, StreamResetCode.MALFORMED_TRACK,
+                                reason)
+        if alias is None or alias in self._malformed_aliases:
+            return
+        self._malformed_aliases.add(alias)
+        for key, sid in list(self._subgroup_stream_by_key.items()):
+            if key[0] == alias:
+                self._reject_stream(sid, StreamResetCode.MALFORMED_TRACK,
+                                    reason)
+        request_id = self._track_aliases.get(alias)
+        if request_id is not None:
+            try:
+                self.unsubscribe(request_id)
+            except Exception:
+                logger.debug("malformed-track cancel failed", exc_info=True)
+
+    def _object_out_of_bounds(self, alias: int, group_id: int,
+                              object_id: int, status) -> Optional[str]:
+        """§2.4.2 items 4/5: an object at or past a known end of group /
+        end of track (§11.2.1.1). The terminal object itself may arrive
+        again."""
+        groups = self._group_bound.get(alias)
+        if groups is not None:
+            bound = groups.get(group_id)
+            if (bound is not None and object_id >= bound
+                    and not (object_id == bound
+                             and status == ObjectStatus.END_OF_GROUP)):
+                return (f"object {group_id}.{object_id} at or past end "
+                        f"of group ({bound})")
+        end = self._track_bound.get(alias)
+        if (end is not None and (group_id, object_id) >= end
+                and not ((group_id, object_id) == end
+                         and status == ObjectStatus.END_OF_TRACK)):
+            return (f"object {group_id}.{object_id} at or past end "
+                    f"of track {end[0]}.{end[1]}")
+        return None
+
+    def _note_object_bound(self, alias: int, group_id: int, object_id: int,
+                           status, end_of_group_bit: bool = False) -> None:
+        """Record the end of group / track an object announces."""
+        if status == ObjectStatus.END_OF_GROUP:
+            self._set_group_bound(alias, group_id, object_id)
+        elif status == ObjectStatus.END_OF_TRACK:
+            self._track_bound[alias] = (group_id, object_id)
+        elif end_of_group_bit:
+            self._set_group_bound(alias, group_id, object_id + 1)
+
+    GROUP_BOUNDS_PER_TRACK = 256
+
+    def _set_group_bound(self, alias: int, group_id: int, bound: int) -> None:
+        groups = self._group_bound.get(alias)
+        if groups is None:
+            groups = self._group_bound[alias] = {}
+        elif (group_id not in groups
+              and len(groups) >= self.GROUP_BOUNDS_PER_TRACK):
+            del groups[next(iter(groups))]
+        prev = groups.get(group_id)
+        groups[group_id] = bound if prev is None else min(prev, bound)
+
+    def _forget_track_bounds(self, alias: int) -> None:
+        self._group_bound.pop(alias, None)
+        self._track_bound.pop(alias, None)
+        self._malformed_aliases.discard(alias)
 
     def _unbind_key(self, key) -> None:
         """Drop the reverse-map entry for a binding key tuple.
@@ -1118,6 +1222,9 @@ class _MOQTSessionMixin:
           tuple. In FIRST_OBJ mode subgroup_id is None at header time
           and the uniqueness check is deferred until the first object.
         """
+        if header.track_alias in self._malformed_aliases:
+            raise MOQTStreamReject(StreamResetCode.MALFORMED_TRACK,
+                                   "malformed track")
         if header.track_alias not in self._track_aliases:
             # Data before the control message that binds the alias is
             # legal (§10.4.2), so this alone is not an error — it is
@@ -1370,9 +1477,7 @@ class _MOQTSessionMixin:
             logstr = f"{id} size: {consumed} bytes {delay}"
 
             logger.debug(f"MOQT event: ObjectDatagram: {logstr}")
-            cb = self._object_cb(msg.track_alias)
-            if cb:
-                cb(msg, consumed, now, group_id, None)
+            self._deliver_datagram(msg, consumed, now)
             return msg
         # Draft-14: ObjectDatagramStatus types 0x20-0x21 (status datagrams)
         elif 0x20 <= dgram_type <= 0x21:
@@ -1393,9 +1498,7 @@ class _MOQTSessionMixin:
             logstr = f"{id} size: {consumed} bytes {delay}"
 
             logger.debug(f"MOQT event: ObjectDatagramStatus: {logstr}")
-            cb = self._object_cb(msg.track_alias)
-            if cb:
-                cb(msg, consumed, now, group_id, None)
+            self._deliver_datagram(msg, consumed, now)
             return msg
         else:
             error = f"datagram type unknown: 0x{dgram_type:x}"
@@ -1439,13 +1542,30 @@ class _MOQTSessionMixin:
         logger.debug(
             f"MOQT event: d18 ObjectDatagram: {msg.group_id}.{msg.object_id} "
             f"size: {consumed} bytes status: {msg.status}")
-        # Status datagrams (END_OF_GROUP / END_OF_TRACK) reach the consumer
-        # like their subgroup-stream counterparts; consumers filter on
-        # msg.status.
-        cb = self._object_cb(msg.track_alias)
+        self._deliver_datagram(msg, consumed, now)
+        return msg
+
+    def _deliver_datagram(self, msg, consumed: int, now: int) -> None:
+        """Bounds-check and deliver one datagram object. Status datagrams
+        (END_OF_GROUP / END_OF_TRACK) reach the consumer like their
+        subgroup-stream counterparts; consumers filter on msg.status."""
+        alias = msg.track_alias
+        if alias in self._malformed_aliases:
+            return
+        status = getattr(msg, 'status', ObjectStatus.NORMAL)
+        if self._group_bound or self._track_bound:
+            reason = self._object_out_of_bounds(
+                alias, msg.group_id, msg.object_id, status)
+            if reason is not None:
+                self._malformed_track(alias, reason)
+                return
+        cb = self._object_cb(alias)
         if cb:
             cb(msg, consumed, now, msg.group_id, None)
-        return msg
+        eog = getattr(msg, 'end_of_group', False)
+        if eog or status != ObjectStatus.NORMAL:
+            self._note_object_bound(alias, msg.group_id, msg.object_id,
+                                    status, eog)
 
     def _on_control_data(self, stream_id: int, data, end_stream: bool,
                          *, is_request_bidi: bool = False) -> None:
@@ -3462,6 +3582,7 @@ class _MOQTSessionMixin:
                         sid, QuicErrorCode.APPLICATION_ERROR)
             self._track_aliases.pop(track_alias, None)
             self._object_handlers.pop(track_alias, None)
+            self._forget_track_bounds(track_alias)
         self._subscriptions.pop(msg.request_id, None)
 
     async def _handle_subscribe_done(self, msg: SubscribeDone) -> None:
@@ -3489,6 +3610,7 @@ class _MOQTSessionMixin:
                     self._mark_stream_torn_down(sid)
             self._track_aliases.pop(track_alias, None)
             self._object_handlers.pop(track_alias, None)
+            self._forget_track_bounds(track_alias)
         future = self._pending_requests.get(msg.request_id)
         if future and not future.done():
             future.set_result(msg)

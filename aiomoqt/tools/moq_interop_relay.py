@@ -54,7 +54,7 @@ from aiomoqt.server import MOQTServer
 from aiomoqt.types import (
     D18MessageType, FilterType, GroupOrder, MOQTMessageType,
     MOQTRequestError, ObjectStatus, ParamType, RequestErrorCode,
-    StreamResetCode, SubscribeErrorCode, parse_draft_spec,
+    StreamResetCode, SubscribeDoneCode, SubscribeErrorCode, parse_draft_spec,
 )
 from aiomoqt.messages import SubgroupHeader
 from aiomoqt.messages.publish import PublishOk
@@ -208,6 +208,7 @@ class _RelayedTrack:
         self._streams = {}
         # id(session) -> subgroup streams opened (PUBLISH_DONE count)
         self._sent_streams = {}
+        self._finished = False
 
     def close(self) -> None:
         """Release the fan-out: stop the drain and forget its streams."""
@@ -217,20 +218,27 @@ class _RelayedTrack:
         self.downstream.clear()
         self._streams.clear()
 
-    def finish(self, status_code=0x2):
-        """Terminate downstream subscriptions cleanly (§11.4.1): FIN any
-        open subgroup streams, then PUBLISH_DONE on each subscription's
-        request stream — never let session teardown reset them."""
+    def finish(self, status_code=0x2, reset_code=None, reason="track ended"):
+        """Terminate downstream subscriptions (§11.4.1): FIN any open
+        subgroup streams (reset them with `reset_code` when given), then
+        PUBLISH_DONE on each subscription's request stream — never let
+        session teardown reset them. Once; later objects are dropped."""
+        if self._finished:
+            return
+        self._finished = True
         for session, alias, rid in list(self.downstream):
             try:
                 for k, (sid, _hdr) in list(self._streams.items()):
                     if k[0] == id(session):
-                        session.stream_write(sid, b"", end_stream=True)
+                        if reset_code is None:
+                            session.stream_write(sid, b"", end_stream=True)
+                        else:
+                            session.stream_reset(sid, int(reset_code))
                         self._streams.pop(k, None)
                 session.subscribe_done(
                     request_id=rid, status_code=status_code,
                     stream_count=self._sent_streams.get(id(session), 0),
-                    reason="track ended")
+                    reason=reason)
             except Exception:
                 logger.debug("relay: finish failed for a subscriber",
                              exc_info=True)
@@ -238,7 +246,14 @@ class _RelayedTrack:
     def on_stream_end(self, group_id, subgroup_id, clean=True, reset_code=0):
         """Upstream ended a subgroup stream: mirror it. A FIN becomes our
         FIN (the subscriber may infer end-of-group, §11.4.2); a reset
-        becomes our reset with the same code, never a FIN."""
+        becomes our reset with the same code, never a FIN. A malformed
+        upstream track ends every downstream subscription with
+        PUBLISH_DONE MALFORMED_TRACK (§2.4.2)."""
+        if not clean and reset_code == StreamResetCode.MALFORMED_TRACK:
+            self.finish(SubscribeDoneCode.MALFORMED_TRACK,
+                        reset_code=StreamResetCode.MALFORMED_TRACK,
+                        reason="malformed track")
+            return
         self.queue.put_nowait(
             (group_id, subgroup_id or 0, None, None, None, None,
              "END" if clean else "RESET", reset_code))
@@ -273,6 +288,8 @@ class _RelayedTrack:
         while True:
             gid, sgid, oid, payload, exts, prio, status, shape = \
                 await self.queue.get()
+            if self._finished:
+                continue
             for session, alias, _rid in list(self.downstream):
                 try:
                     await self._forward_one(

@@ -27,6 +27,14 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
   the d14 shape. `DraftProfile.merged_datagram_layout` gates TX and RX.
 - Status datagrams (END_OF_GROUP / END_OF_TRACK) are delivered to the
   object consumer on every draft; they were parsed and dropped.
+- Malformed tracks (§2.4.2): an object at or past a known end of group
+  (END_OF_GROUP status, or FIN on an END_OF_GROUP-bit stream) or end of
+  track resets that track's streams with MALFORMED_TRACK, cancels the
+  subscription, and refuses the track's later streams; the session
+  stays up. Subgroup-stream ordering faults that used to trip an
+  `assert` (session-fatal, stripped under -O) take the same path. The
+  interop relay answers an upstream MALFORMED_TRACK reset with
+  PUBLISH_DONE MALFORMED_TRACK downstream and stops forwarding.
 - RequestErrorCode gains the d18 codes (GOING_AWAY, EXCESSIVE_LOAD,
   NAMESPACE_TOO_LARGE, UNSUPPORTED_EXTENSION, REDIRECT) and REQUEST_ERROR
   carries the §10.6.1 Redirect structure with REDIRECT at d18.

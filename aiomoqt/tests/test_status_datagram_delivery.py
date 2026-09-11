@@ -13,6 +13,9 @@ def _session(draft):
     s.negotiated_draft = draft
     s._object_handlers = {}
     s._track_default_priority = {}
+    s._malformed_aliases = set()
+    s._group_bound = {}
+    s._track_bound = {}
     s.delivered = []
     s.on_object_received = lambda msg, size, ts, gid, sgid: \
         s.delivered.append((msg.track_alias, gid, msg.object_id, msg.status))
