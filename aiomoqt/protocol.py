@@ -587,6 +587,10 @@ class _MOQTSessionMixin:
             return
         self._bidi_streams.pop(request_id, None)
         self._subscriptions.pop(request_id, None)
+        alias = next((ta for ta, rid in self._track_aliases.items()
+                      if rid == request_id), None)
+        if alias is not None:
+            self._forget_track_bounds(alias)
         fut = self._pending_requests.pop(request_id, None)
         if fut is not None and not fut.done():
             fut.set_exception(MOQTRequestError(

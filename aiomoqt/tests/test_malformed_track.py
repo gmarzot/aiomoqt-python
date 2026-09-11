@@ -72,6 +72,20 @@ def test_fin_on_end_of_group_bit_stream_bounds_the_group():
     assert s._object_out_of_bounds(7, 3, 5, NORMAL)
 
 
+def test_cancelling_a_request_stream_frees_the_track_bounds():
+    s = _stub()
+    s._bidi_stream_requests = {40: 5}
+    s._bidi_streams = {5: 40}
+    s._subscriptions = {5: ["sub"]}
+    s._pending_requests = {}
+    s._request_cancel_handlers = {}
+    s._track_aliases = {7: 5}
+    s._note_object_bound(7, 0, 3, EOG)
+    s._malformed_aliases.add(7)
+    s._on_request_stream_terminated(40)
+    assert s._group_bound == {} and s._malformed_aliases == set()
+
+
 def test_group_bounds_per_track_are_capped():
     s = _stub()
     for g in range(s.GROUP_BOUNDS_PER_TRACK + 10):
@@ -137,8 +151,13 @@ async def test_object_past_end_of_group_resets_the_stream_and_cancels_the_track(
             assert ended == [(0, True, 0),
                              (1, False, StreamResetCode.MALFORMED_TRACK)]
             assert got == [0, 1, 2]                   # the offending object never delivered
-            assert ok.track_alias in session._malformed_aliases
             await asyncio.sleep(0.1)
+            # Cancelling the subscription releases the track's state; a
+            # fresh subscribe starts clean (aliases are per track, not
+            # per subscription).
+            assert ok.request_id not in session._subscriptions
+            assert not [k for k in session._subgroup_stream_by_key
+                        if k[0] == ok.track_alias]
             assert session._close_err is None         # session survives
     finally:
         server.close()
