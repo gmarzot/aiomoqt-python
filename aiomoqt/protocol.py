@@ -512,8 +512,26 @@ class _MOQTSessionMixin:
             return tuple(part.encode() if isinstance(part, str) else part for part in namespace)
         raise ValueError("namespace must be string with '/' delimiters or tuple")
 
+    # d14/d16 request-id credit (§9.5): our advertised ceiling on the
+    # peer's ids and theirs on ours. None = no ceiling (d18).
+    REQUEST_ID_WINDOW = 10000
+    _local_request_max: Optional[int] = None
+    _peer_request_limit: Optional[int] = None
+    _requests_blocked_sent = False
+
     def _allocate_request_id(self) -> int:
-        """Get next available subscribe ID."""
+        """Next request id. At the peer's MAX_REQUEST_ID (pre-d18) send
+        REQUESTS_BLOCKED once and refuse the request."""
+        limit = self._peer_request_limit
+        if limit is not None and self._next_request_id >= limit:
+            if not self._requests_blocked_sent:
+                self._requests_blocked_sent = True
+                self.send_control_message(
+                    SubscribesBlocked(maximum_request_id=limit))
+            raise MOQTRequestError(
+                error_code=int(RequestErrorCode.INTERNAL_ERROR),
+                reason=f"peer MAX_REQUEST_ID {limit} exhausted",
+                retry_interval=0)
         request_id = self._next_request_id
         self._next_request_id += 2
         self._sent_requests.append(request_id)
@@ -747,7 +765,14 @@ class _MOQTSessionMixin:
                         SessionCloseCode.INVALID_REQUEST_ID,
                         f"peer request_id {rid} reused or regressed "
                         f"(max seen {self._peer_request_max})")
+                if (self._local_request_max is not None
+                        and rid >= self._local_request_max):
+                    raise MOQTException(
+                        SessionCloseCode.TOO_MANY_REQUESTS,
+                        f"peer request_id {rid} beyond our MAX_REQUEST_ID "
+                        f"{self._local_request_max}")
                 self._peer_request_max = rid
+                self._extend_request_credit(rid)
             msg_len += hdr_len
             if end_pos > buf.tell():
                 logger.debug(f"MOQT event: control message: seeking msg end: {end_pos}")
@@ -2093,7 +2118,8 @@ class _MOQTSessionMixin:
         if self._profile.control_uni_pair:
             self.send_control_message(Setup(options=params))
         else:
-            params[SetupParamType.MAX_REQUEST_ID] = 10000
+            self._local_request_max = self.REQUEST_ID_WINDOW
+            params[SetupParamType.MAX_REQUEST_ID] = self._local_request_max
             # For raw QUIC with explicit draft: single version
             # For H3/WT: version list depends on whether WT protocol was
             # negotiated (negotiated -> no version array; else d14 format)
@@ -2598,6 +2624,10 @@ class _MOQTSessionMixin:
         """Send SERVER_SETUP message in response to CLIENT_SETUP."""
         if parameters is None:
             parameters = {}
+        if not self._profile.control_uni_pair:
+            self._local_request_max = self.REQUEST_ID_WINDOW
+            parameters.setdefault(SetupParamType.MAX_REQUEST_ID,
+                                  self._local_request_max)
 
         message = ServerSetup(
             selected_version=selected_version,
@@ -3506,6 +3536,7 @@ class _MOQTSessionMixin:
                 )
             else:
                 self._settle_draft(selected_draft)
+            self._ingest_request_limit(msg.parameters)
 
             # indicate moqt session setup is complete
             self._moqt_session_setup.set_result(True)
@@ -3536,6 +3567,7 @@ class _MOQTSessionMixin:
                 is_draft16_or_later(self.negotiated_draft) or MOQT_VERSION_DRAFT14 in msg.versions
             )
             if version_ok:
+                self._ingest_request_limit(msg.parameters)
                 self.server_setup()
                 self._moqt_session_setup.set_result(True)
             else:
@@ -3661,9 +3693,36 @@ class _MOQTSessionMixin:
             self._close_session(SessionCloseCode.NO_ERROR,
                                 f"subscribe done: {msg.status_code}")
 
+    def _extend_request_credit(self, rid: int) -> None:
+        """Raise our MAX_REQUEST_ID before the peer reaches it (§9.5)."""
+        limit = self._local_request_max
+        if limit is None or rid < limit - self.REQUEST_ID_WINDOW // 2:
+            return
+        self._local_request_max = limit + self.REQUEST_ID_WINDOW
+        self.send_control_message(
+            MaxSubscribeId(request_id=self._local_request_max))
+
+    def _ingest_request_limit(self, params) -> None:
+        """Peer's MAX_REQUEST_ID Setup parameter (§9.3.1.3). Absent
+        leaves us unlimited rather than the spec's zero."""
+        if self._profile.control_uni_pair or not params:
+            return
+        limit = params.get(SetupParamType.MAX_REQUEST_ID)
+        if limit is not None:
+            self._peer_request_limit = int(limit)
+
     async def _handle_max_request_id(self, msg: MaxSubscribeId) -> None:
+        """§9.5: the peer raised the ceiling on our request ids; it
+        MUST only increase."""
         logger.info(f"MOQT event: handle {msg}")
-        # Update maximum subscribe ID
+        new = int(msg.request_id)
+        if (self._peer_request_limit is not None
+                and new <= self._peer_request_limit):
+            self._close_session(SessionCloseCode.PROTOCOL_VIOLATION,
+                                f"MAX_REQUEST_ID {new} did not increase")
+            return
+        self._peer_request_limit = new
+        self._requests_blocked_sent = False
 
     async def _handle_subscribes_blocked(self, msg: SubscribesBlocked) -> None:
         logger.info(f"MOQT event: handle {msg}")

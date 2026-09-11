@@ -318,17 +318,16 @@ def _relay_pub_sub(url: str, draft: int, pub_mode: str, insecure: bool,
     got, want = m.group(1), m.group(2)
     status = "PASS" if got == want else "FAIL"
     detail = f"{got}/{want} ok"
-    # Subscribe count is the pass criterion, but a subscriber can be
-    # "ok" (SUBSCRIBE_OK received) yet receive zero objects — the relay
-    # forwards no data on a successfully subscribed track (seen on
-    # cf-d16-interop and imquic, both unrelated relays; cause under
-    # investigation — forward-state flip / d16 SUBSCRIBE_UPDATE). Flag
-    # it as an advisory note (like the flaky-retry annotation) without
-    # failing, so the false-green stays visible in the output.
+    # SUBSCRIBE_OK alone is not a pass: a subscribed track that delivers
+    # no objects fails unless the relay is a known offender (compat key
+    # zero-objects-tolerated), which keeps the note visible instead.
     om = re.search(r"Total objects:\s+([\d,]+)", text)
     objects = int(om.group(1).replace(",", "")) if om else None
     if status == "PASS" and objects == 0:
-        detail += " (note: subscribed but 0 objects delivered)"
+        if "zero-objects-tolerated" in (compat or ""):
+            detail += " (note: subscribed but 0 objects delivered; tolerated)"
+        else:
+            status, detail = "FAIL", f"{got}/{want} subscribed, 0 objects delivered"
     return status, detail
 
 

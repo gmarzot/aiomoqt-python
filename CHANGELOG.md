@@ -51,6 +51,18 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
   relay's TRACK_STATUS_OK / errors (§3.3.2, §10.11, §10.14). Request
   streams no longer accumulate for the session's life.
   `_send_reply(..., fin=True)` for application handlers.
+- d14/d16 MAX_REQUEST_ID is enforced (§9.5): a peer request id at or
+  past our advertised ceiling closes the session with
+  TOO_MANY_REQUESTS; the ceiling is raised (MAX_REQUEST_ID) before a
+  well-behaved peer reaches it; our own requests stop at the peer's
+  ceiling (REQUESTS_BLOCKED once, then `MOQTRequestError`) until a
+  MAX_REQUEST_ID raises it, and a non-increasing MAX_REQUEST_ID is a
+  protocol violation. Servers now advertise MAX_REQUEST_ID in
+  SERVER_SETUP (they never did). A peer that omits the Setup parameter
+  leaves us unlimited rather than the spec's zero.
+- Release regression: a pub-sub leg that subscribes but delivers zero
+  objects now FAILS unless the relay carries the compat key
+  `zero-objects-tolerated` (cf-d16-interop, a known non-forwarder).
 - RequestErrorCode gains the d18 codes (GOING_AWAY, EXCESSIVE_LOAD,
   NAMESPACE_TOO_LARGE, UNSUPPORTED_EXTENSION, REDIRECT) and REQUEST_ERROR
   carries the §10.6.1 Redirect structure with REDIRECT at d18.
