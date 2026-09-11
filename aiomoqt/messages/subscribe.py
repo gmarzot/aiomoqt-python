@@ -96,8 +96,7 @@ class TrackStatus(MOQTMessage):
 
         request_id = buf.pull_vint()
 
-        tuple_len = buf.pull_vint()
-        namespace = tuple(buf.pull_bytes(buf.pull_vint()) for _ in range(tuple_len))
+        namespace = MOQTMessage._pull_tuple(buf)
 
         track_name_len = buf.pull_vint()
         track_name = buf.pull_bytes(track_name_len)
@@ -258,8 +257,7 @@ class TrackStatusError(MOQTMessage):
 
         request_id = buf.pull_vint()
         error_code = buf.pull_vint()
-        reason_len = buf.pull_vint()
-        reason = buf.pull_bytes(reason_len).decode()
+        reason = MOQTMessage._pull_reason(buf)
 
         return cls(
             request_id=request_id,
@@ -371,8 +369,7 @@ class Subscribe(MOQTMessage):
 
         request_id = buf.pull_vint()
 
-        tuple_len = buf.pull_vint()
-        namespace = tuple(buf.pull_bytes(buf.pull_vint()) for _ in range(tuple_len))
+        namespace = MOQTMessage._pull_tuple(buf)
 
         track_name_len = buf.pull_vint()
         track_name = buf.pull_bytes(track_name_len)
@@ -603,8 +600,7 @@ class SubscribeError(MOQTMessage):
 
         request_id = buf.pull_vint()
         error_code = buf.pull_vint()
-        reason_len = buf.pull_vint()
-        reason = buf.pull_bytes(reason_len).decode()
+        reason = MOQTMessage._pull_reason(buf)
 
         return cls(
             request_id=request_id,
@@ -742,8 +738,7 @@ class SubscribeDone(MOQTMessage):
         if prof.draft >= 18:
             status_code = cls._D18_WIRE_SWAP.get(status_code, status_code)
         stream_count = buf.pull_vint()
-        reason_len = buf.pull_vint()
-        reason = buf.pull_bytes(reason_len).decode()
+        reason = MOQTMessage._pull_reason(buf)
 
         return cls(
             request_id=request_id,

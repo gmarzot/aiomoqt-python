@@ -115,15 +115,13 @@ class RequestError(MOQTMessage):
                       if prof.reply_has_request_id else None)
         error_code = buf.pull_vint()
         retry_interval = buf.pull_vint()
-        reason_len = buf.pull_vint()
-        reason = buf.pull_bytes(reason_len).decode()
+        reason = MOQTMessage._pull_reason(buf)
 
         redirect = None
         if (error_code == cls.REDIRECT and not prof.reply_has_request_id
                 and (buf_end is None or buf.tell() < buf_end)):
             uri = buf.pull_bytes(buf.pull_vint())
-            namespace = tuple(buf.pull_bytes(buf.pull_vint())
-                              for _ in range(buf.pull_vint()))
+            namespace = MOQTMessage._pull_tuple(buf)
             name = buf.pull_bytes(buf.pull_vint())
             redirect = (uri, namespace, name)
 
@@ -216,10 +214,7 @@ class Namespace(MOQTMessage):
 
     @classmethod
     def deserialize(cls, buf: Buffer, *, prof: DraftProfile, buf_end: Optional[int] = None) -> 'Namespace':
-        tuple_len = buf.pull_vint()
-        namespace_suffix = tuple(
-            buf.pull_bytes(buf.pull_vint()) for _ in range(tuple_len)
-        )
+        namespace_suffix = MOQTMessage._pull_tuple(buf)
         return cls(namespace_suffix=namespace_suffix)
 
 
@@ -253,8 +248,5 @@ class NamespaceDone(MOQTMessage):
 
     @classmethod
     def deserialize(cls, buf: Buffer, *, prof: DraftProfile, buf_end: Optional[int] = None) -> 'NamespaceDone':
-        tuple_len = buf.pull_vint()
-        namespace_suffix = tuple(
-            buf.pull_bytes(buf.pull_vint()) for _ in range(tuple_len)
-        )
+        namespace_suffix = MOQTMessage._pull_tuple(buf)
         return cls(namespace_suffix=namespace_suffix)

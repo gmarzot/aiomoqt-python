@@ -103,6 +103,31 @@ class MOQTMessage:
     _trailing_extensions_truncation_count = 0
     _prefixed_location_count = 0
 
+    REASON_PHRASE_MAX = 1024      # §3.5
+    NAMESPACE_MAX_FIELDS = 32     # §2.4.1
+
+    @staticmethod
+    def _pull_reason(buf: Buffer) -> str:
+        """Reason Phrase: length-prefixed UTF-8; over the maximum is a
+        protocol violation."""
+        n = buf.pull_vint()
+        if n > MOQTMessage.REASON_PHRASE_MAX:
+            raise MOQTProtocolViolation(
+                f"reason phrase {n} bytes "
+                f"(max {MOQTMessage.REASON_PHRASE_MAX})")
+        return buf.pull_bytes(n).decode()
+
+    @staticmethod
+    def _pull_tuple(buf: Buffer) -> tuple:
+        """Track Namespace tuple; over the maximum field count is a
+        protocol violation."""
+        n = buf.pull_vint()
+        if n > MOQTMessage.NAMESPACE_MAX_FIELDS:
+            raise MOQTProtocolViolation(
+                f"namespace has {n} fields "
+                f"(max {MOQTMessage.NAMESPACE_MAX_FIELDS})")
+        return tuple(buf.pull_bytes(buf.pull_vint()) for _ in range(n))
+
     @staticmethod
     def _extensions_decode(buf: Buffer, with_length: bool = True,
                            buf_end: Optional[int] = None,

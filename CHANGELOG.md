@@ -35,6 +35,16 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
   `assert` (session-fatal, stripped under -O) take the same path. The
   interop relay answers an upstream MALFORMED_TRACK reset with
   PUBLISH_DONE MALFORMED_TRACK downstream and stops forwarding.
+- Receive-side MUST-close rules now close the session with
+  PROTOCOL_VIOLATION: an unknown uni stream type (was a per-stream
+  STOP_SENDING, and the subgroup-type test only masked bit 7, so
+  0x110 parsed as a subgroup header); an Object Status the draft does
+  not define (d14's DOES_NOT_EXIST at d16/d18, any unassigned value);
+  properties on a status object, on streams and datagrams; a datagram
+  PROPERTIES bit with an empty properties block; a Reason Phrase over
+  1024 bytes; a Track Namespace over 32 fields (every control message
+  that carries one). `DraftProfile` gains `subgroup_type_mask` and
+  `object_statuses`.
 - RequestErrorCode gains the d18 codes (GOING_AWAY, EXCESSIVE_LOAD,
   NAMESPACE_TOO_LARGE, UNSUPPORTED_EXTENSION, REDIRECT) and REQUEST_ERROR
   carries the §10.6.1 Redirect structure with REDIRECT at d18.

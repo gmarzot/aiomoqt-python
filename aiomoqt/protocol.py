@@ -939,6 +939,11 @@ class _MOQTSessionMixin:
             except BufferReadError:
                 chain.rollback()
                 return
+            except MOQTProtocolViolation as e:
+                logger.error(f"MOQT stream({stream_id}): {e.reason_phrase}")
+                self._close_session(SessionCloseCode.PROTOCOL_VIOLATION,
+                                    e.reason_phrase)
+                return
             except Exception as e:
                 tell = chain.tell()
                 hex_anchor = chain.data_slice(
@@ -996,6 +1001,14 @@ class _MOQTSessionMixin:
                         stream_id)
                     return
                 state.object_id = msg_obj.object_id
+                if msg_obj.status:
+                    fault = self._status_object_fault(msg_obj.status,
+                                                      msg_obj.extensions)
+                    if fault is not None:
+                        logger.error(f"MOQT stream({stream_id}): {fault}")
+                        self._close_session(
+                            SessionCloseCode.PROTOCOL_VIOLATION, fault)
+                        return
                 if self._group_bound or self._track_bound:
                     reason = self._object_out_of_bounds(
                         alias, state.group_id, msg_obj.object_id,
@@ -1142,6 +1155,17 @@ class _MOQTSessionMixin:
             del groups[next(iter(groups))]
         prev = groups.get(group_id)
         groups[group_id] = bound if prev is None else min(prev, bound)
+
+    def _status_object_fault(self, status, extensions) -> Optional[str]:
+        """§11.2.1.1/§11.2.1.2: a non-Normal status must be one the
+        draft defines and carries no properties; either fault closes
+        the session."""
+        if status not in self._profile.object_statuses:
+            return (f"object status 0x{int(status):x} undefined at "
+                    f"draft-{self._profile.draft}")
+        if extensions:
+            return "properties on a status object"
+        return None
 
     def _forget_track_bounds(self, alias: int) -> None:
         self._group_bound.pop(alias, None)
@@ -1332,12 +1356,11 @@ class _MOQTSessionMixin:
                 # stream type (and all data-plane ints); pre-d18 RFC9000.
                 buf.vi64 = self._profile.vi64
                 stream_type = buf.pull_vint()
-                # SubgroupHeader form 0b0XX1XXXX (bit 4 set): d14 0x10-0x1D,
-                # d16 += 0x30-0x3D (bit 5 DEFAULT_PRIORITY), d18 += 0x50-0x5D
-                # / 0x70-0x7D (bit 6 FIRST_OBJECT) and excludes bit 7.
-                # Reserved subgroup_id_mode 0b11 (bits 1-2) is invalid.
+                # SUBGROUP_HEADER is 0x10 plus the flag bits the draft
+                # defines; reserved subgroup_id_mode 0b11 is invalid.
+                mask = self._profile.subgroup_type_mask
                 is_subgroup = (
-                    (stream_type & 0x10) and not (stream_type & 0x80)
+                    (stream_type & ~mask) == 0x10
                     and ((stream_type >> 1) & 0x03) != 3
                 )
                 if stream_type in (PADDING_STREAM_TYPE,):
@@ -1357,8 +1380,8 @@ class _MOQTSessionMixin:
                     data_type = "FETCH_HEADER"
                     self._admit_fetch_stream(stream_id, msg_header)
                 else:
-                    data_type = f"0x{stream_type:x}"
-                    logger.warning(f"MOQT stream({stream_id}): unexpected data stream type: {data_type}")
+                    raise MOQTProtocolViolation(
+                        f"unknown data stream type 0x{stream_type:x}")
 
                 if msg_header is None:
                     # Stream-level parse failure on the data stream type
@@ -1525,13 +1548,22 @@ class _MOQTSessionMixin:
             logger.error(f"MOQT error: " + error)
             self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
             return
-        msg = ObjectDatagram.deserialize(
-            buf, buf.capacity, type_val=dgram_type, prof=self._profile)
-        if msg is None:
-            error = f"datagram parsing failed at: {buf.tell()}"
+        try:
+            msg = ObjectDatagram.deserialize(
+                buf, buf.capacity, type_val=dgram_type, prof=self._profile)
+        except (ValueError, MOQTProtocolViolation) as e:
+            msg, error = None, f"datagram: {e}"
+        else:
+            error = (f"datagram parsing failed at: {buf.tell()}"
+                     if msg is None else None)
+        if error is None and (dgram_type & 0x01) and not msg.extensions:
+            error = "datagram PROPERTIES bit with no properties"
+        if error is None and msg.status:
+            error = self._status_object_fault(msg.status, msg.extensions)
+        if error is not None:
             logger.error(f"MOQT error: " + error)
             self._close_session(SessionCloseCode.PROTOCOL_VIOLATION, error)
-            return msg
+            return None
         if dgram_type & 0x08:
             # DEFAULT_PRIORITY: inherit the latched track default, not
             # the library constant (§11.3.1).

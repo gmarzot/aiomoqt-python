@@ -97,8 +97,7 @@ class Publish(MOQTMessage):
         # have no length prefix; sequence runs to end of message).
         request_id = buf.pull_vint()
 
-        tuple_len = buf.pull_vint()
-        namespace = tuple(buf.pull_bytes(buf.pull_vint()) for _ in range(tuple_len))
+        namespace = MOQTMessage._pull_tuple(buf)
 
         track_name_len = buf.pull_vint()
         track_name = buf.pull_bytes(track_name_len)
@@ -337,8 +336,7 @@ class PublishError(MOQTMessage):
     def deserialize(cls, buf: Buffer, *, prof: DraftProfile, buf_end: Optional[int] = None) -> 'PublishError':
         request_id = buf.pull_vint()
         error_code = buf.pull_vint()
-        reason_len = buf.pull_vint()
-        reason = buf.pull_bytes(reason_len).decode()
+        reason = MOQTMessage._pull_reason(buf)
 
         return cls(
             request_id=request_id,

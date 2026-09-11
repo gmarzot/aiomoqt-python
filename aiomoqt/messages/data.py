@@ -15,6 +15,7 @@ from . import (MOQTUnderflow, MOQTMessage, ObjectStatus, DataStreamType,
                SUBGROUP_HEADER_BASE, SUBGROUP_ID_ZERO, SUBGROUP_ID_FIRST_OBJ, SUBGROUP_ID_EXPLICIT,
                OBJECT_DATAGRAM_BASE, OBJECT_DATAGRAM_STATUS_BASE)
 from ..context import is_draft16_or_later, DraftProfile
+from ..types import MOQTProtocolViolation
 from ..utils.buffer import Buffer, BufferReadError
 from ..utils.logger import get_logger
 from aiopquic._binding._streamchain import (
@@ -428,7 +429,10 @@ class ObjectHeader(MOQTMessage):
         self.object_id = (delta if prev_object_id is None
                           else prev_object_id + delta + 1)
         self.extensions = exts
-        self.status = ObjectStatus(status)
+        try:
+            self.status = ObjectStatus(status)
+        except ValueError:
+            raise MOQTProtocolViolation(f"unknown object status 0x{status:x}")
         self.payload = payload
 
     @classmethod
@@ -1006,7 +1010,11 @@ class ObjectDatagram(MOQTMessage):
                 buf, delta=prof is not None and prof.params_delta_coded)
 
         if is_status:
-            status = ObjectStatus(pull())
+            raw = pull()
+            try:
+                status = ObjectStatus(raw)
+            except ValueError:
+                raise MOQTProtocolViolation(f"unknown object status 0x{raw:x}")
             payload = b''
         else:
             status = ObjectStatus.NORMAL

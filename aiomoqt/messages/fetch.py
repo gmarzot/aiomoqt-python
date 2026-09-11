@@ -125,12 +125,7 @@ class Fetch(MOQTMessage):
             fetch_type = buf.pull_vint()
 
         if fetch_type == FetchType.STANDALONE:
-            ns = []
-            ns_len = buf.pull_vint()
-            for _ in range(ns_len):
-                part_len = buf.pull_vint()
-                ns.append(buf.pull_bytes(part_len))
-            namespace = tuple(ns)
+            namespace = MOQTMessage._pull_tuple(buf)
             track_name_len = buf.pull_vint()
             track_name = buf.pull_bytes(track_name_len)
             start_group = buf.pull_vint()
@@ -290,8 +285,7 @@ class FetchError(MOQTMessage):
 
         request_id = buf.pull_vint()
         error_code = buf.pull_vint()
-        reason_len = buf.pull_vint()
-        reason = buf.pull_bytes(reason_len).decode()
+        reason = MOQTMessage._pull_reason(buf)
 
         return cls(
             request_id=request_id,
