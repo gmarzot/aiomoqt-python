@@ -63,6 +63,9 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
 - Release regression: a pub-sub leg that subscribes but delivers zero
   objects now FAILS unless the relay carries the compat key
   `zero-objects-tolerated` (cf-d16-interop, a known non-forwarder).
+- A FIN in the middle of a serialized Object closes the session with
+  PROTOCOL_VIOLATION (§11.4); the partial object used to be discarded
+  silently. A FIN inside the stream header stays a stream-level fault.
 - Orphan data streams are reaped: a uni stream whose header has not
   parsed within 5 s (`STREAM_BIND_DEADLINE_S`) gets STOP_SENDING
   DELIVERY_TIMEOUT instead of pinning its bytes and stream credit for

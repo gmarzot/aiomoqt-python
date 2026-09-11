@@ -169,3 +169,27 @@ def test_namespace_over_32_fields_is_a_violation(draft):
     with pytest.raises(MOQTProtocolViolation, match="33 fields"):
         Subscribe.deserialize(Buffer(data=payload, vi64=prof.vi64), prof=prof,
                               buf_end=len(payload))
+
+
+def test_fin_mid_object_closes_the_session():
+    s = _stub(18)
+    hdr = _header(18)
+    s._on_stream_data(3, bytes(hdr.serialize().data), False)
+    obj = bytes(hdr.next_object(payload=b"abcdefgh").data)
+    s._on_stream_data(3, obj[:-3], True)               # FIN inside the payload
+    assert s.closed and s.closed[0][0] == 0x3
+    assert "FIN mid-object" in s.closed[0][1]
+
+
+def test_fin_after_a_whole_object_is_clean():
+    s = _stub(18)
+    hdr = _header(18)
+    s._on_stream_data(3, bytes(hdr.serialize().data), False)
+    s._on_stream_data(3, bytes(hdr.next_object(payload=b"abcdefgh").data), True)
+    assert not s.closed and s.delivered == [(0, ObjectStatus.NORMAL)]
+
+
+def test_fin_inside_the_stream_header_rejects_without_closing():
+    s = _stub(18)
+    s._on_stream_data(3, _vint(18, 0x50, 7)[:2], True)   # truncated header
+    assert not s.closed

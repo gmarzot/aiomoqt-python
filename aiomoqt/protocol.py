@@ -969,6 +969,20 @@ class _MOQTSessionMixin:
             self._drain_stream(stream_id, state)
 
         if end_stream and stream_id in self._data_streams:
+            # §11.4: a FIN in the middle of a serialized Object closes
+            # the session. Only once the header bound the stream — a
+            # truncated header is a stream fault, not a session one.
+            residual = state.chain.capacity - state.chain.tell()
+            if residual > 0 and state.parser is not None:
+                error = (f"FIN mid-object on stream {stream_id}: "
+                         f"{residual} residual bytes")
+                logger.error(f"MOQT error: {error}")
+                self._close_session(SessionCloseCode.PROTOCOL_VIOLATION,
+                                    error)
+                return
+            if residual > 0:
+                logger.warning(f"MOQT stream({stream_id}): FIN with "
+                               f"{residual} bytes of unparsed header")
             self._cleanup_stream(stream_id)
 
     def _drain_stream(self, stream_id: int, state: _DataStreamState) -> None:
