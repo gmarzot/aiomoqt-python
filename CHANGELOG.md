@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.11.0rc6 (unreleased)
+## v0.11.0rc6
 
 Pairs with aiopquic 0.4.0rc1 (unchanged).
 
