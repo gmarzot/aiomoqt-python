@@ -19,11 +19,18 @@ their timestamps (--no-pace to blast).
   # live H.264 Annex-B ingest (OBS/ffmpeg pipe; frames stamped on arrival)
   ffmpeg -i srt://0.0.0.0:9000?mode=listener -c:v copy -bsf:v h264_mp4toannexb \\
     -f h264 - | %(prog)s https://relay.example/moq-relay -N obs --h264 -
+
+  # live MPEG-TS ingest: H.264 + AAC on one pipe, stamped from the PES PTS
+  ffmpeg -fflags nobuffer -i srt://0.0.0.0:9000?mode=listener -map 0:v -map 0:a \\
+    -c copy -f mpegts -flush_packets 1 - | %(prog)s https://relay.example/moq-relay -N obs --ts -
+
+Each run prints a ready-to-paste player URL (see --player-base).
 """
 import asyncio
 import logging
 import sys
 import time
+from typing import Optional
 
 from aiomoqt.client import MOQTClient
 from aiomoqt.media import (
@@ -31,6 +38,7 @@ from aiomoqt.media import (
     StreamMapping,
 )
 from aiomoqt.media.cmaf import CmafChunker
+from aiomoqt.media.mpegts import TsDemuxer
 from aiomoqt.media.sources import (
     AnnexBAssembler, Mp4Reader, avcc_codec_string, pcm_tone_frames,
     sps_dimensions,
@@ -60,6 +68,15 @@ def parse_args():
                         help='Publish a live H.264 Annex-B elementary '
                              'stream ("-" = stdin, e.g. an ffmpeg/OBS '
                              'pipe); frames are stamped on arrival')
+    parser.add_argument('--ts', type=str, default=None, metavar='FILE',
+                        help='Publish a live MPEG-TS stream ("-" = stdin): '
+                             'H.264 video and AAC audio, stamped from '
+                             'the PES timestamps')
+    parser.add_argument('--player-base', type=str,
+                        default='http://localhost:5173/simple/',
+                        metavar='URL',
+                        help='Base of the player URL printed at start '
+                             '(default: the moq-playa simple example)')
     parser.add_argument('--packaging', choices=('loc', 'cmaf'),
                         default='loc',
                         help='Media packaging (cmsf draft): loc = '
@@ -115,11 +132,31 @@ def parse_args():
     _cli.add_session(parser, keepalive=True)
     _cli.add_help(parser)
     args = parser.parse_args()
-    if args.mp4 and args.h264:
-        parser.error('--mp4 and --h264 are mutually exclusive')
+    if sum(bool(s) for s in (args.mp4, args.h264, args.ts)) > 1:
+        parser.error('--mp4, --h264 and --ts are mutually exclusive')
     if args.packaging == 'cmaf' and not args.mp4:
         parser.error('--packaging cmaf requires --mp4')
     return args
+
+
+def _player_url(args, relay) -> str:
+    """The moq-playa URL that plays this run: WT relay URL, namespace,
+    draft, and the per-packaging knobs the runbook uses."""
+    if args.url.startswith('https://'):
+        wt = args.url
+    else:
+        wt = f"https://{relay.host}:{relay.port}{relay.path or '/moq-relay'}"
+    q = [f"url={wt}", f"ns={args.namespace}"]
+    draft = args.draft[0] if isinstance(args.draft, list) else args.draft
+    if draft is not None:
+        q.append(f"v={draft}")
+    q.append("catalogBootstrap=subscribe")
+    if args.packaging == 'cmaf':
+        if args.target_latency:
+            q.append(f"targetLatency={args.target_latency}")
+    else:
+        q += ["warmStart=1", "catchUp=1.1", "cushion=50"]
+    return args.player_base + '?' + '&'.join(q)
 
 
 def _build_catalog(args, video, audio, chunkers=None) -> Catalog:
@@ -208,6 +245,113 @@ async def _feed_h264_live(track, fh, asm, first, args, stats):
     await track.finish()
 
 
+class _LiveAac:
+    """Catalog-facing view of a live ADTS audio stream."""
+
+    def __init__(self, dmx: TsDemuxer):
+        self.asc = dmx.audio_asc
+        self.samplerate = dmx.audio_samplerate
+        self.channels = dmx.audio_channels
+        self.avg_bitrate = None
+
+    @property
+    def codec_string(self) -> str:
+        return f"mp4a.40.{(self.asc[0] >> 3) & 0x1F}"
+
+
+def _open_live_ts(args):
+    """Read the stream until the PMT and the codec configs the catalog
+    needs are in; returns (fh, demuxer, units-so-far, video, audio)."""
+    fh = sys.stdin.buffer if args.ts == '-' else open(args.ts, 'rb')
+    dmx = TsDemuxer()
+    first = []
+
+    def ready():
+        if not dmx.pmt_seen:
+            return False
+        if dmx.video_pid is not None and dmx.video.config is None:
+            return False
+        want_audio = not args.no_audio and dmx.audio_pid is not None
+        return not want_audio or dmx.audio_asc is not None
+
+    while not ready():
+        chunk = fh.read1(65536)
+        if not chunk:
+            raise SystemExit('  error: ts stream ended before PMT and codec configs')
+        units = dmx.feed(chunk)
+        if units and not first:
+            dmx.to_us(units[0].pts)  # anchor at arrival, not at first send
+        first += units
+    video = _LiveH264(dmx.video) if dmx.video_pid is not None else None
+    audio = (_LiveAac(dmx)
+             if dmx.audio_pid is not None and not args.no_audio else None)
+    if video is None and audio is None:
+        raise SystemExit('  error: ts stream has no H.264 video or AAC audio')
+    return fh, dmx, first, video, audio
+
+
+async def _apply_config_change(dmx: TsDemuxer, tracks: dict, pub):
+    """A new SPS/PPS or ADTS header: the track's group-start config and
+    the catalog follow it, and the catalog is republished."""
+    cat = pub.catalog_track.catalog
+    init = {i.id: i for i in (cat.initDataList or [])}
+    video = tracks.get('video')
+    if video is not None and dmx.video.config != video.config:
+        video.config = dmx.video.config
+        view = _LiveH264(dmx.video)
+        for t in cat.tracks:
+            if t.name == 'video':
+                t.codec, t.width, t.height = (view.codec_string, view.width,
+                                              view.height)
+        if 'v0' in init:
+            init['v0'].data = InitData.from_bytes('v0', view.config).data
+        print(f"  video config changed: {view.width}x{view.height} "
+              f"{view.codec_string}")
+    audio = tracks.get('audio')
+    if audio is not None and dmx.audio_asc != audio.config:
+        audio.config = dmx.audio_asc
+        view = _LiveAac(dmx)
+        for t in cat.tracks:
+            if t.name == 'audio':
+                t.codec, t.samplerate = view.codec_string, view.samplerate
+                t.channelConfig = str(view.channels)
+        if 'a0' in init:
+            init['a0'].data = InitData.from_bytes('a0', view.asc).data
+        print(f"  audio config changed: {view.codec_string} "
+              f"{view.samplerate}Hz {view.channels}ch")
+    cat.generatedAt = int(time.time() * 1000)
+    if pub.catalog_track.state == TrackState.SUBSCRIBED:
+        await pub.catalog_track.publish_catalog(cat)
+
+
+async def _feed_ts_live(tracks: dict, fh, dmx: TsDemuxer, first, args,
+                        stats: dict, pub):
+    """Dispatch demuxed access units to their tracks with PTS-derived
+    stamps."""
+    loop = asyncio.get_running_loop()
+    deadline = time.monotonic() + args.duration
+    units = list(first)
+    eof = False
+    while True:
+        if dmx.config_changed:
+            dmx.config_changed = False
+            await _apply_config_change(dmx, tracks, pub)
+        for u in units:
+            track = tracks.get(u.kind)
+            if track is not None:
+                await _send(track, stats[u.kind], u.payload, u.key,
+                            timestamp=dmx.to_us(u.pts))
+        if eof or time.monotonic() >= deadline:
+            break
+        chunk = await loop.run_in_executor(None, fh.read1, 65536)
+        if chunk:
+            units = dmx.feed(chunk)
+        else:
+            units, eof = dmx.close(), True
+    for track in tracks.values():
+        await track.finish()
+
+
 async def _pace(start: float, ts_us: int, pace: bool):
     if pace:
         delay = start + ts_us / 1e6 - time.monotonic()
@@ -215,19 +359,21 @@ async def _pace(start: float, ts_us: int, pace: bool):
             await asyncio.sleep(delay)
 
 
-async def _send(track, stats, payload: bytes, key: bool):
-    """Send one frame stamped with the wall clock, or drop it while no
-    subscriber has started generation: a paced feeder stays on the
-    clock instead of queueing a backlog for a late joiner.
+async def _send(track, stats, payload: bytes, key: bool,
+                timestamp: Optional[int] = None):
+    """Send one frame, or drop it while no subscriber has started
+    generation: a paced feeder stays on the clock instead of queueing a
+    backlog for a late joiner.
 
     LOC timestamps without a TIMESCALE property are µs since the Unix
-    epoch — players schedule against the wall clock, and a paced live
-    publisher's capture time is its send time."""
+    epoch — players schedule against the wall clock. Sources without
+    their own presentation clock are stamped at send time."""
     if track.state != TrackState.SUBSCRIBED:
         stats.dropped += 1
         return
-    await track.send_frame(payload, key_frame=key,
-                           timestamp=int(time.time() * 1_000_000))
+    if timestamp is None:
+        timestamp = int(time.time() * 1_000_000)
+    await track.send_frame(payload, key_frame=key, timestamp=timestamp)
     stats.count(payload)
 
 
@@ -325,6 +471,12 @@ async def run(args):
     live = _open_live_h264(args) if args.h264 else None
     if live:
         video = live[3]
+    ts = _open_live_ts(args) if args.ts else None
+    ts_audio = None
+    if ts:
+        video, ts_audio = ts[3], ts[4]
+        if ts_audio is None:
+            args.no_audio = True
     mp4_audio = (reader.audio
                  if reader and not (args.tone or args.no_audio) else None)
     chunkers = {}
@@ -336,7 +488,7 @@ async def run(args):
             print("  note: cmaf packaging — tone audio skipped "
                   "(no AAC track in the mp4)")
             args.no_audio = True
-    catalog = _build_catalog(args, video, mp4_audio, chunkers)
+    catalog = _build_catalog(args, video, mp4_audio or ts_audio, chunkers)
 
     client = MOQTClient(
         relay.host, relay.port, path=relay.path,
@@ -348,12 +500,31 @@ async def run(args):
     )
     print(f"  relay: {relay}  namespace: {args.namespace}")
     print(f"  tracks: {', '.join(t.name for t in catalog.tracks)}")
+    print(f"  player: {_player_url(args, relay)}")
     async with client.connect() as session:
         await session.client_session_init()
         pub = MediaPublisher(session, args.namespace, catalog)
         stats = {}
         feeders = []
-        if not args.no_audio:
+        if ts is not None:
+            fh, dmx, first, _, _ = ts
+            tracks = {}
+            if video is not None:
+                tracks['video'] = pub.add_track(LocTrackPublisher(
+                    session, args.namespace, 'video', config=video.config,
+                    loc01_compat=args.loc01_compat))
+                stats['video'] = _TrackStats()
+            if ts_audio is not None:
+                tracks['audio'] = pub.add_track(LocTrackPublisher(
+                    session, args.namespace, 'audio', media_kind='audio',
+                    config=ts_audio.asc,
+                    mapping=(StreamMapping.DATAGRAM if args.datagram
+                             else StreamMapping.PER_GROUP),
+                    loc01_compat=args.loc01_compat))
+                stats['audio'] = _TrackStats()
+            feeders.append(_feed_ts_live(tracks, fh, dmx, first, args,
+                                         stats, pub))
+        elif not args.no_audio:
             audio_track = pub.add_track(LocTrackPublisher(
                 session, args.namespace, 'audio', media_kind='audio',
                 config=mp4_audio.asc if mp4_audio is not None else None,
