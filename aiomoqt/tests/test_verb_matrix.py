@@ -64,6 +64,9 @@ def _session(draft, is_client=True):
     s.stream_reset = lambda sid, code: s.resets.append(("reset", sid, code))
     s.stream_stop_sending = lambda sid, code: s.resets.append(
         ("stop", sid, code))
+    s.fins = []
+    s.stream_write = lambda sid, data, end_stream=False: (
+        s.fins.append(sid) if end_stream else None)
 
     async def _open(*a, **k):
         return 9

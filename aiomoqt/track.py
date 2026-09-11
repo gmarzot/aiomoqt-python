@@ -420,8 +420,9 @@ class PublishedTrack(Track):
                     f"streams={self._stream_count}")
         try:
             # d18 §10.11: PUBLISH_DONE rides the subscription's request
-            # stream; pre-d18 _send_reply routes to the control stream.
-            session._send_reply(req_id, msg)
+            # stream, FIN after; pre-d18 _send_reply routes to the
+            # control stream.
+            session._send_reply(req_id, msg, fin=True)
         except Exception:
             pass  # session may already be closing
 

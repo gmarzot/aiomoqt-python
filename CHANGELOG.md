@@ -45,6 +45,12 @@ Pairs with aiopquic 0.4.0rc1 (unchanged).
   1024 bytes; a Track Namespace over 32 fields (every control message
   that carries one). `DraftProfile` gains `subgroup_type_mask` and
   `object_statuses`.
+- d18 terminal replies FIN our half of the request stream: REQUEST_ERROR
+  from subscribe_error / fetch_error / the TRACK_STATUS fallback,
+  PUBLISH_DONE from subscribe_done and PublishedTrack, and the interop
+  relay's TRACK_STATUS_OK / errors (§3.3.2, §10.11, §10.14). Request
+  streams no longer accumulate for the session's life.
+  `_send_reply(..., fin=True)` for application handlers.
 - RequestErrorCode gains the d18 codes (GOING_AWAY, EXCESSIVE_LOAD,
   NAMESPACE_TOO_LARGE, UNSUPPORTED_EXTENSION, REDIRECT) and REQUEST_ERROR
   carries the §10.6.1 Redirect structure with REDIRECT at d18.

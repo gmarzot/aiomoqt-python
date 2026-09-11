@@ -611,7 +611,7 @@ async def _on_subscribe(session, msg):
         )
         logger.info(f"MOQT send: {err}")
         # Reply returns on the SUBSCRIBE's own bidi stream at d18.
-        session._send_reply(msg.request_id, err)
+        session._send_reply(msg.request_id, err, fin=True)
     else:
         session.subscribe_error(
             request_id=msg.request_id,
@@ -769,7 +769,7 @@ async def _on_track_status(session, msg):
             retry_interval=0,
             reason="track not served here",
         )
-        session._send_reply(msg.request_id, err)
+        session._send_reply(msg.request_id, err, fin=True)
         return
     params = {}
     largest = getattr(track.upstream, "_largest", None)
@@ -778,7 +778,7 @@ async def _on_track_status(session, msg):
     logger.info(f"relay: track-status ns={ns} track={msg.track_name} "
                 f"-> OK largest={largest}")
     ok = RequestOk(request_id=msg.request_id, parameters=params)
-    session._send_reply(msg.request_id, ok)
+    session._send_reply(msg.request_id, ok, fin=True)
 
 
 def _build_server(bind, port, cert, key, use_quic, draft):

@@ -2360,17 +2360,21 @@ class _MOQTSessionMixin:
     _REPLY_CLASSES = (RequestOk, RequestError, SubscribeOk, SubscribeDone,
                       PublishOk, FetchOk)
 
-    def _send_reply(self, request_id: int, msg: MOQTMessage) -> None:
+    def _send_reply(self, request_id: int, msg: MOQTMessage,
+                    fin: bool = False) -> None:
         """Send a response to a request. In d18 responses travel on the
         request's own bidi stream (demuxed by stream, no in-band Request
-        ID); pre-d18 they go on the single control stream."""
+        ID); pre-d18 they go on the single control stream. `fin` closes
+        our half of the request stream after a terminal reply
+        (REQUEST_ERROR, PUBLISH_DONE, TRACK_STATUS_OK: §3.3.2, §10.11,
+        §10.14); it has no meaning on the control stream."""
         if self._profile.control_uni_pair:
-            self._send_on_request_stream(request_id, msg)
+            self._send_on_request_stream(request_id, msg, fin=fin)
         else:
             self.send_control_message(msg)
 
-    def _send_on_request_stream(self, request_id: int,
-                                msg: MOQTMessage) -> None:
+    def _send_on_request_stream(self, request_id: int, msg: MOQTMessage,
+                                fin: bool = False) -> None:
         """Send on the bidi stream a request owns: every request in d18,
         SUBSCRIBE_NAMESPACE from d16. Pre-d18 an unbound request falls
         back to the control stream; d18 has no such path."""
@@ -2378,6 +2382,8 @@ class _MOQTSessionMixin:
                if is_draft16_or_later(self.negotiated_draft) else None)
         if sid is not None:
             self.send_stream_message(sid, msg)
+            if fin:
+                self.stream_write(sid, b"", end_stream=True)
         elif self._profile.control_uni_pair:
             # Both directions bind request streams (incoming at
             # _on_control_data, outgoing at _send_request); a missing
@@ -2790,7 +2796,7 @@ class _MOQTSessionMixin:
             reason=reason,
         )
         logger.info(f"MOQT send: {message}")
-        self._send_reply(request_id, message)
+        self._send_reply(request_id, message, fin=True)
         return message
 
     def subscribe_error(
@@ -2813,7 +2819,7 @@ class _MOQTSessionMixin:
                 reason=reason,
             )
             logger.info(f"MOQT send: {message}")
-            self._send_reply(request_id, message)
+            self._send_reply(request_id, message, fin=True)
         else:
             message = SubscribeError(
                 request_id=request_id,
@@ -3069,7 +3075,7 @@ class _MOQTSessionMixin:
                 reason=reason,
             )
             logger.info(f"MOQT send: {message}")
-            self._send_reply(request_id, message)
+            self._send_reply(request_id, message, fin=True)
         else:
             message = FetchError(
                 request_id=request_id,
@@ -3677,7 +3683,7 @@ class _MOQTSessionMixin:
                 reason="track status not supported",
             )
             logger.info(f"MOQT send: {err}")
-            self._send_reply(msg.request_id, err)
+            self._send_reply(msg.request_id, err, fin=True)
 
     async def _handle_track_status_ok(self, msg: TrackStatusOk) -> None:
         logger.info(f"MOQT event: handle {msg}")

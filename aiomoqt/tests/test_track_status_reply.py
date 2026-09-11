@@ -17,8 +17,10 @@ def _session(draft=18):
     s._profile = profile_for(draft)
     s._bidi_streams = {5: 9}
     s._writes = []
-    s.stream_write = lambda sid, data, **kw: s._writes.append(
-        (sid, bytes(data)))
+    s._fins = []
+    s.stream_write = lambda sid, data, **kw: (
+        s._writes.append((sid, bytes(data))) if data
+        else s._fins.append(sid))
     return s
 
 
@@ -36,6 +38,7 @@ def test_default_handler_answers_request_error_on_the_request_stream():
     sid, raw = s._writes[0]
     assert sid == 9                      # the request's bidi stream
     assert _reply_type(raw, s._profile) == 0x05  # REQUEST_ERROR
+    assert s._fins == [9]                # terminal: FIN follows (§10.14)
 
 
 def test_default_request_update_handler_answers():
@@ -49,6 +52,7 @@ def test_default_request_update_handler_answers():
     sid, raw = s._writes[0]
     assert sid == 9
     assert _reply_type(raw, s._profile) == 0x05  # REQUEST_ERROR
+    assert s._fins == []                 # the subscription's stream stays open
 
 
 def test_relay_answers_ok_for_served_track_and_error_for_unknown():
